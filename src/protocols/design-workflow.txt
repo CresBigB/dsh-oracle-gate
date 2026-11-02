@@ -1,0 +1,791 @@
+// 由 @local/dsh-protocol-kit 生成：设计决策协议 v3（期 3.6）
+// 输入（args）：
+//   stage        'clarify' | 'design' | 'all'（默认 all，兼容旧调用）
+//   requirement  原始需求
+//   inventory    P0 资产盘点文本
+//   root         项目根目录
+//   perspectives 发散视角
+//   spec         stage=design 时传入已决议的 spec
+//
+// 协议阶段：
+//   P1 术语落地 + 需求澄清  名词短语 -> 代码实体；命中 0/多/冲突/未引用 都变成决策题
+//   P2 强制发散            每个解读 × 每个视角一个互不可见 agent
+//   P3 对抗评审            可投 veto，unknowns 分 requirement / evidence 两类
+//   P4 收敛裁决            确定性硬门，三态判定：admitted / blocked-on-human / rejected
+//
+// v3 相对 v2 的改造（见 docs/generalization-design.md 期 3.6）：
+//   1. unknowns 分两类：requirement（需求歧义）与 evidence（证据缺口）。
+//      裁决三态——只缺需求信息记 blocked-on-human，不算失败；被 veto 或缺证据才是 rejected。
+//      起因：某项目 那轮 3 个方案全被 unknowns 挡下，但缺的全是需求信息，不该算「做不出来」。
+//   2. P1 加术语落地：需求的每个关键名词短语都要落到具体代码实体上，
+//      命中 0 个 / 多于 1 个 / 与现有行为冲突 / 找到已实现但没人引用的代码 —— 都直接变成问题。
+//      起因：上一轮需求歧义直到 P3 才被评审发现，白烧了 6 个 agent。
+//   3. 问题做成决策题：每题 2–3 个选项，各附影响（改哪些文件、验收怎么变），
+//      外加推荐默认值、理由和一个具体例子。每轮最多 3 题，超出部分自动降级为假设。
+//   4. 人不在场也能推进：默认值写进 spec.assumptions，由假设引出的疑问不再算 unknown，
+//      结果标 admitted-under-assumptions 并附待确认清单。
+//      若某个歧义会整体改变目标文件，P2 按不同解读分别出方案，让人看完方案再选。
+//   5. stage 拆两段：workflow 中途没法暂停问人，所以 clarify 只跑 P1 返回 questions，
+//      design 拿到已决议的 spec 再跑 P2–P4。中间由 Lead 问人，或直接采用默认值。
+
+const stage = args.stage ?? 'all'
+const requirement = args.requirement ?? ''
+const inventory = args.inventory ?? ''
+// 领域包文本（可选）：该领域通常该验哪些维度、常见失败归因、留出集形态。
+// 它只影响 P1 的 acceptance 与 P2 的视角，不参与 P4 的裁决。
+const domain = args.domain ?? ''
+const root = args.root ?? ''
+const MAX_QUESTIONS = 3
+const perspectives = args.perspectives ?? [
+  '最小改动：能复用现有实现就不新增，优先沿用项目既有模式',
+  '一致性优先：优先贴合现有命名、样式约定与交互习惯，宁可多写几行',
+  '性能与长期维护：优先可扩展、可测试的抽象，接受更多前期成本',
+]
+
+// ── schema：验收条件 ────────────────────────────────────────────────
+const ACCEPTANCE_ITEMS = {
+  type: 'array',
+  description: '可判定的验收条件，每条都要标注判据层级',
+  items: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['criterion', 'level'],
+    properties: {
+      criterion: { type: 'string', description: '一条可观察或可测试的验收条件' },
+      level: {
+        type: 'string',
+        enum: ['L0', 'L1', 'L2', 'L3'],
+        description:
+          'L0 硬门（编译/类型检查/lint/单测，不通过即否决）；L1 量化指标（性能、体积、截图差异，给阈值）；L2 结构化评审（需引用 文件:行号）；L3 人类品味（视觉、文案，无法自动化）',
+      },
+      check: {
+        type: 'string',
+        description:
+          'L0/L1 必须以一条可直接执行的命令开头（例如 `node tests/x.mjs`、`pnpm typecheck`；多条用 && 连接，会被自动拆条），命令后面可以跟中文说明写判定标准。只写「怎么算」而不给命令（如「在脚本里聚合并断言 |D| ≥ 0.9」）会被 kit_freeze 判 blocking 拒绝冻结。L2/L3 写「人工判断」',
+      },
+    },
+  },
+}
+
+const SPEC_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['goal', 'acceptance', 'constraints'],
+  properties: {
+    goal: { type: 'string', description: '一句话说明这次要达成什么' },
+    acceptance: ACCEPTANCE_ITEMS,
+    constraints: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '技术栈、风格、兼容性等边界，未指定的写「未指定」',
+    },
+    readings: {
+      type: 'array',
+      description:
+        '如果这个需求存在会让目标文件整体改变的不同解读（比如「井列表」可能指首页四级树，也可能指另一个数据管理页），每种解读写一条。只有一种理解时留空数组',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'summary'],
+        properties: {
+          id: { type: 'string', description: 'r1 / r2' },
+          summary: { type: 'string', description: '这个解读下需求指向什么，一句话' },
+          target_files: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '这个解读下要改的主要文件，`路径:行号` 形式',
+          },
+        },
+      },
+    },
+  },
+}
+
+// ── schema：术语落地 ────────────────────────────────────────────────
+const TERM_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['term', 'hit_count', 'verdict', 'candidates', 'note'],
+  properties: {
+    term: { type: 'string', description: '需求里的关键名词短语原文，例如「井列表」「按井名搜索」' },
+    hit_count: { type: 'number', description: '在代码库里找到的对应实体个数' },
+    verdict: {
+      type: 'string',
+      enum: ['unique', 'none', 'ambiguous', 'conflict', 'unreferenced'],
+      description:
+        'unique 恰好一个实体可用；none 找不到对应实体；ambiguous 命中多个需要选；conflict 与现有行为冲突（例如已有非实时搜索框、过滤逻辑匹配全部层级）；unreferenced 找到已实现但没有任何地方引用的代码',
+    },
+    candidates: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '候选实体，每条 `路径:行号 — 说明`，必须来自实际读到的代码',
+    },
+    note: { type: 'string', description: '这个术语的落地结论；verdict 非 unique 时说明为什么不唯一' },
+  },
+}
+
+// ── schema：决策题 ──────────────────────────────────────────────────
+const QUESTION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id', 'kind', 'question', 'context', 'options', 'recommended', 'reason', 'example'],
+  properties: {
+    id: { type: 'string', description: 'q1 / q2 / q3' },
+    kind: {
+      type: 'string',
+      enum: ['requirement', 'evidence'],
+      description:
+        'requirement 需求本身没说清、只有人能定；evidence 缺资料或凭据。绝大多数应该是 requirement',
+    },
+    question: { type: 'string', description: '一句话把选择点问清楚，不要写成开放式提问' },
+    context: {
+      type: 'string',
+      description: '为什么会有这个问题：代码里的现状是什么、你查到了什么。要带 `路径:行号`',
+    },
+    options: {
+      type: 'array',
+      description: '2–3 个具体选项，不要写成「是/否」这种没有信息量的二选一',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['label', 'impact', 'files'],
+        properties: {
+          label: { type: 'string', description: '选项短名，几个字' },
+          impact: {
+            type: 'string',
+            description: '选它会导致什么：改哪些文件、验收条件怎么变、有什么代价',
+          },
+          files: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '受影响的主要文件，`路径:行号` 形式',
+          },
+        },
+      },
+    },
+    recommended: {
+      type: 'string',
+      description: '推荐哪个选项，必须逐字等于 options 里某个 label',
+    },
+    reason: { type: 'string', description: '为什么推荐它，一到两句，说清取舍' },
+    example: {
+      type: 'string',
+      description: '一个具体例子，让人一眼看出差别。例如「输入 大庆 时，选 A 看到 3 个井，选 B 看到 1 家公司加 2 个油田」',
+    },
+  },
+}
+
+// ── schema：P1 输出（展平，避免深层嵌套校验问题）────────────────────
+const CLARIFY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['terms', 'questions', 'goal', 'acceptance', 'constraints', 'readings'],
+  properties: {
+    terms: { type: 'array', items: TERM_SCHEMA, description: '每个关键名词短语的落地结果' },
+    questions: {
+      type: 'array',
+      items: QUESTION_SCHEMA,
+      description: `只提真正阻塞的决策点，最多 ${MAX_QUESTIONS} 个`,
+    },
+    goal: SPEC_SCHEMA.properties.goal,
+    acceptance: ACCEPTANCE_ITEMS,
+    constraints: SPEC_SCHEMA.properties.constraints,
+    readings: SPEC_SCHEMA.properties.readings,
+  },
+}
+
+const DESIGN_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name', 'summary', 'structural_choice', 'reuses', 'tradeoffs', 'risks', 'second_option'],
+  properties: {
+    name: { type: 'string', description: '方案短名；若同时有多个解读，名前缀带上解读 id' },
+    summary: { type: 'string', description: '方案要点，3–6 句' },
+    structural_choice: {
+      type: 'string',
+      description:
+        '这个方案在关键结构上的选择，用「维度=取值」表示，如「渲染位置=页面内联」或「筛选时机=输入即过滤」。各方案的取值不得重复',
+    },
+    reuses: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '复用 P0 清单里的哪些既有资产，每条格式必须为 `<path>:<line> — 用途`，路径必须逐字来自清单',
+    },
+    tradeoffs: { type: 'array', items: { type: 'string' }, description: '这个方案放弃了什么' },
+    risks: { type: 'array', items: { type: 'string' }, description: '最可能出错的地方' },
+    second_option: {
+      type: 'string',
+      description: '同一视角下的第二选择，以及什么条件下它更好',
+    },
+  },
+}
+
+const REVIEW_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'design',
+    'verdict',
+    'veto',
+    'unknowns',
+    'reuse_verdict',
+    'reuse_reason',
+    'evidence_refs',
+    'issues',
+    'recommended',
+  ],
+  properties: {
+    design: { type: 'string', description: '被评审方案的 name' },
+    verdict: {
+      type: 'string',
+      enum: ['recommend', 'acceptable', 'reject'],
+      description: '推荐 / 可接受 / 否决',
+    },
+    veto: {
+      type: 'boolean',
+      description: '是否行使否决权。只有在方案确实不可行（会出错、违反硬约束）时才为 true；「我不喜欢」不算',
+    },
+    unknowns: {
+      type: 'array',
+      description:
+        '你无法判断的点。每条必须标明是哪一类：requirement = 需求本身没说清、只有人能定；evidence = 缺资料或凭据、查不到。已经在 spec.assumptions 里被假设掉的点不要再报',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['kind', 'text'],
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['requirement', 'evidence'],
+            description: 'requirement 需要人拍板；evidence 需要补资料',
+          },
+          text: { type: 'string', description: '具体是什么点，要能让人看懂' },
+        },
+      },
+    },
+    reuse_verdict: {
+      type: 'string',
+      enum: ['fully-reused', 'partially-reused', 'ignored-list', 'no-applicable-asset'],
+      description:
+        '方案对 P0 清单的利用程度；ignored-list 表示清单里明显有可用的却没用；no-applicable-asset 表示清单里确实一条都用不上（此时 reuses 必须为空，并在 reuse_reason 说明为什么用不上）',
+    },
+    reuse_reason: {
+      type: 'string',
+      description: '必须回答「为什么不复用清单里的 X」；若全都复用了，说明复用得对不对',
+    },
+    evidence_refs: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '你的判断依据引用清单里的哪些 `path:line`，至少一条；没有依据就不该下判断',
+    },
+    issues: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '具体缺陷，尽量指向方案里的原话',
+    },
+    recommended: {
+      type: 'string',
+      description: '在这批方案里推荐哪个（可以是自己），以及决定性的理由',
+    },
+  },
+}
+
+// ── 清单路径索引：P4 用它核对 reuses 是不是编的 ───────────────────────
+const knownPaths = new Set()
+for (const line of inventory.split('\n')) {
+  // 清单行格式：`- <path>:<line> — <kind> — <name>`
+  const match = line.match(/^- (\S+):\d+ — /)
+  if (match !== null) knownPaths.add(match[1].replace(/\\/g, '/'))
+}
+
+function normalizePath(raw) {
+  return String(raw ?? '').replace(/\\/g, '/').trim()
+}
+
+/** reuses 条目形如 `path:line — 用途`，取出 path 部分。 */
+function reusePathOf(entry) {
+  const match = String(entry).match(/^(.+?):\d+/)
+  return match === null ? null : normalizePath(match[1])
+}
+
+/**
+ * 路径是否真的在清单里。
+ * 宽容处理绝对路径与相对路径的差异：agent 有时会补上项目前缀。
+ */
+function isKnownPath(candidate) {
+  const path = normalizePath(candidate)
+  if (path === '') return false
+  if (knownPaths.has(path)) return true
+  for (const known of knownPaths) {
+    if (path === known || path.endsWith('/' + known) || known.endsWith('/' + path)) return true
+  }
+  return false
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// P0.5 + P1：术语落地与需求澄清
+// ═══════════════════════════════════════════════════════════════════
+phase('P1 术语落地与需求澄清')
+log(`需求：${requirement}`)
+
+const clarify = await agent(
+  [
+    '你是需求分析师，任务是**在动手设计之前**把需求里每个含糊的地方钉死。',
+    '',
+    `原始需求：${requirement}`,
+    '',
+    `项目根目录：${root}`,
+    '',
+    '已盘点到的既有资产（每条都带 路径:行号，可直接引用）：',
+    inventory,
+    '',
+    ...(domain === '' ? [] : [
+      '## 这个领域通常该验的维度（写 acceptance 时参考，不要生搬）',
+      '下面这份清单是同类项目的通用经验，**不是**本次验收条件。挑适用的用，不适用的跳过；',
+      '命令必须换成这个项目真实可执行的形态，不要照抄「例如」里的示例。',
+      domain,
+      '',
+    ]),
+    '## 第一步：术语落地（terms）',
+    '从需求里抽出每个关键名词短语（例如「井浏览器」「井列表」「按井名搜索」「输入框」），逐个落到代码里：',
+    '1. 到清单和代码里找它实际对应的实体。可以自己读文件确认，不要只看清单。',
+    '2. 判定 verdict：',
+    '   - unique：恰好一个实体，含义清楚；',
+    '   - none：找不到对应实体（这个概念在项目里不存在）；',
+    '   - ambiguous：命中多个候选，需要人选定；',
+    '   - conflict：与现有行为冲突。典型情形：需求说「加一个搜索框」但那个位置已经有一个（哪怕行为不同）；',
+    '     需求说「只匹配井」但现有过滤逻辑匹配全部层级；需求说「实时」但现有一版是点击触发。',
+    '     这种情况必须查证现有代码，确认到底是不是冲突，不要想当然。',
+    '   - unreferenced：你发现项目里已经有实现这个需求的代码，但全仓没有任何地方 import / 引用它。',
+    '     用 grep 之类的检索确认「确实没有引用」，确认了才算。这类情况一定要报出来——',
+    '     它意味着有人写过、可能废弃了、也可能忘了接回去，必须问清楚是否启用。',
+    '3. candidates 里每条都要写 `路径:行号 — 说明`，必须来自你实际读到的代码，不能编。',
+    '',
+    '## 第二步：出决策题（questions）',
+    'terms 里每个 verdict 不是 unique 的术语，都对应一道题。另外，如果需求本身有无法从代码判断的空缺，也出题。',
+    `最多 ${MAX_QUESTIONS} 道题——超过这个数，人就不会认真看了。挑最关键的。`,
+    '每道题必须满足：',
+    '1. options 给 2–3 个**具体**选项，不要「是/否」「要/不要」这种没信息量的二选一；',
+    '2. 每个选项的 impact 说清楚：要改哪些文件、验收条件怎么变、有什么代价；files 列出受影响文件；',
+    '3. recommended 逐字等于某个选项的 label，并给 reason 说明取舍；',
+    '4. example 给一个具体例子，让人一眼看出两个选项的实际差别；',
+    '5. context 写清代码现状（带 路径:行号），让人知道这题为什么必须问。',
+    '',
+    '## 第三步：draft_spec',
+    'goal 一句话；acceptance 每条标 L0–L3（能机器判定的往 L0/L1 放）；',
+    '**L0/L1 的 check 必须由可执行命令开头**：`node tests/x.mjs`、`pnpm typecheck`、`npx vitest run tests/a.test.ts` 这类，',
+    '多条用 && 连接（kit_freeze 会自动拆成 a/b 两条），命令后面再跟中文说明判定标准。',
+    '反面例子（会被拒绝冻结）：「在脚本里对 r.assets 按父目录聚合，断言命中数 / |D| ≥ 0.9」——这是算法描述，没人知道该跑什么。',
+    '正面例子：「`node tests/inventory-render.test.mjs` 退出码 0，脚本内部断言目录汇总行覆盖率 ≥ 90%」。',
+    'constraints 只写需求里确实存在的边界，没说的写「未指定」；',
+    'readings 只有在「不同理解会导致目标文件整体不同」时才填，一般留空数组。',
+    '',
+    '注意：不要因为存在待确认的问题就把 acceptance 写空。先按最可能的理解写出来，',
+    '问题只是标出需要人确认的分叉点。',
+  ].join('\n'),
+  { schema: CLARIFY_SCHEMA, label: 'P1-术语落地' },
+)
+
+function buildSpec(source) {
+  if (source === null || typeof source !== 'object') return null
+  return {
+    goal: source.goal ?? '',
+    acceptance: Array.isArray(source.acceptance) ? source.acceptance : [],
+    constraints: Array.isArray(source.constraints) ? source.constraints : [],
+    readings: Array.isArray(source.readings) ? source.readings : [],
+    assumptions: Array.isArray(source.assumptions) ? source.assumptions : [],
+  }
+}
+
+const clarified = clarify === null ? null : buildSpec(clarify)
+if (clarify === null) log('P1 术语落地失败，后续将只依据原始需求推进')
+
+// 问题按 MAX_QUESTIONS 截断；被截掉的题不丢弃，自动降级为假设（见下）。
+const allQuestions = clarify !== null && Array.isArray(clarify.questions) ? clarify.questions : []
+const questions = allQuestions.slice(0, MAX_QUESTIONS)
+const deferredQuestions = allQuestions.slice(MAX_QUESTIONS)
+if (deferredQuestions.length > 0) {
+  log(`${deferredQuestions.length} 道问题超出注意力预算，已降级为假设`)
+}
+
+/**
+ * 默认值 -> 假设。
+ * 人不在场时靠这些假设把流程推下去，最后标 admitted-under-assumptions 并附清单待确认。
+ */
+const defaultAssumptions = [...questions, ...deferredQuestions].map((question) => ({
+  id: `assumption-${question.id}`,
+  question_id: question.id,
+  statement: `${question.question} → 按「${question.recommended}」处理`,
+  reason: question.reason,
+  source: 'default',
+}))
+
+if (stage === 'clarify') {
+  return {
+    ok: true,
+    stage: 'clarify',
+    requirement,
+    terms: clarify !== null && Array.isArray(clarify.terms) ? clarify.terms : [],
+    questions,
+    deferred_questions: deferredQuestions.map((question) => question.id),
+    draft_spec: clarified,
+    default_assumptions: defaultAssumptions,
+    next:
+      questions.length === 0
+        ? 'P1 没有发现需要人拍板的点，可以直接用 draft_spec 进 stage=design。'
+        : `用 ask_user_question 一次问完这 ${questions.length} 道题；`
+          + '如果不方便问，直接进 stage=design，默认值会被记为假设并在结果里标出待确认项。',
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// stage=design / all：P2 -> P3 -> P4
+// ═══════════════════════════════════════════════════════════════════
+// stage=design 时 spec 来自 args（人已决议）；stage=all 时用刚澄清的。
+const incomingSpec = args.spec ?? null
+const spec = incomingSpec !== null ? buildSpec(incomingSpec) : clarified
+const acceptance = spec === null ? [] : spec.acceptance
+const readings =
+  spec !== null && Array.isArray(spec.readings) && spec.readings.length > 0
+    ? spec.readings
+    : [{ id: 'r1', summary: '', target_files: [] }]
+
+// 已被假设覆盖的点，评审不该再报 unknown（P3 prompt 里也会说一遍）。
+const assumptionText = (spec === null ? [] : spec.assumptions)
+  .map((item) => item.statement)
+  .join('\n')
+
+phase('P2 强制发散')
+log(`按 ${readings.length} 个解读 × ${perspectives.length} 个视角并行出方案`)
+
+const planItems = []
+for (const reading of readings) {
+  for (let i = 0; i < perspectives.length; i += 1) {
+    planItems.push({ reading, perspective: perspectives[i], index: i })
+  }
+}
+
+const designs = await parallel(
+  planItems.map((item) => () =>
+    agent(
+      [
+        `你是方案设计者。视角：${item.perspective}`,
+        '',
+        `需求：${requirement}`,
+        '',
+        item.reading.summary === ''
+          ? '（需求只有一种理解）'
+          : `当前解读（${item.reading.id}）：${item.reading.summary}`
+            + (item.reading.target_files.length > 0
+              ? `；涉及文件：${item.reading.target_files.join('、')}`
+              : ''),
+        '',
+        `已澄清的验收条件：${JSON.stringify(acceptance)}`,
+        '',
+        '已知的假设（不要重复提问，按这些假设设计）：',
+        assumptionText === '' ? '（无）' : assumptionText,
+        '',
+        '项目里已有的资产（必须认真读完，别凭空设计）：',
+        inventory,
+        '',
+        '规则：',
+        '1. 先判断这个需求能不能直接用清单里的既有资产满足；能就直接说怎么用；',
+        '2. reuses 里每条都要写 `路径:行号 — 用途`，路径必须逐字复制上面的清单，'
+          + '脚本会核对，编造的路径会让整个方案作废；',
+        '3. structural_choice 用「维度=取值」写清你的关键结构选择，'
+          + '其它视角的方案会选别的取值，重复了说明你没有真正发散；',
+        '4. second_option 必须是同一视角下真实不同的做法，不是同一方案的措辞变体；',
+        '5. 如果需求里有你认为必须由人拍板的地方，把它写进 risks，不要自己拍板。',
+      ].join('\n'),
+      {
+        schema: DESIGN_SCHEMA,
+        label: item.reading.summary === ''
+          ? `P2-方案${item.index + 1}`
+          : `P2-${item.reading.id}-方案${item.index + 1}`,
+      },
+    ),
+  ),
+)
+const validDesigns = designs.filter(Boolean)
+if (validDesigns.length === 0) {
+  log('所有方案生成失败，协议中止')
+  return { ok: false, reason: 'no-design', spec, terms: clarify === null ? [] : clarify.terms }
+}
+log(`产出 ${validDesigns.length} 个方案`)
+
+phase('P3 对抗评审')
+const reviews = await parallel(
+  validDesigns.map((design) => () =>
+    agent(
+      [
+        '你是对抗评审。你的任务不是夸它，是找它会出错的地方。',
+        '',
+        `需求：${requirement}`,
+        '',
+        `方案：${JSON.stringify(design)}`,
+        '',
+        '项目里已有的资产：',
+        inventory,
+        '',
+        '已知的假设（这些点已经被人或默认值定了，不要因为「假设可能不对」就报 unknown）：',
+        assumptionText === '' ? '（无）' : assumptionText,
+        '',
+        '必须回答：',
+        '1. 方案有没有放着清单里的现成资产不用、自己重新实现？reuse_verdict 必须诚实给出；'
+          + '清单里确实一条都用不上时写 no-applicable-asset，并在 reuse_reason 说明为什么用不上 —— '
+          + '不要为了显得有用而硬凑资产；',
+        '2. reuse_reason 要具体到「哪条资产、为什么不用/怎么用」，不能只写「已考虑」；',
+        '3. evidence_refs 至少引用一条清单里的 `path:line` 作为判断依据，没有依据就不要下判断；',
+        '4. veto 只在方案确实不可行时投 true（会出错、违反硬约束），「我不喜欢」不算；',
+        '5. unknowns 每条必须标 kind：',
+        '   requirement = 需求本身没说清、只有人能定的；',
+        '   evidence = 缺资料或凭据、查不到所以判断不了。',
+        '   已经在上面假设清单里的点不要再报——那样只会让流程原地打转；',
+        '6. issues 里每条都要指向方案里的具体表述，不要泛泛而谈。',
+      ].join('\n'),
+      { schema: REVIEW_SCHEMA, label: `P3-评审-${design.name}` },
+    ),
+  ),
+)
+const validReviews = reviews.filter(Boolean)
+
+phase('P4 收敛裁决')
+// 确定性硬门：这些检查不依赖模型判断，脚本自己算。
+const checks = []
+for (const design of validDesigns) {
+  const review = validReviews.find((item) => item.design === design.name)
+
+  // 复用证据核对：编造的路径不算证据。
+  const reusePaths = design.reuses.map(reusePathOf)
+  const fabricated = reusePaths.filter((path) => path === null || !isKnownPath(path))
+  const verifiedReuses = reusePaths.length - fabricated.length
+
+  const veto = review !== undefined && review.veto === true
+  const rawUnknowns = review === undefined ? [] : review.unknowns
+  const unknowns = rawUnknowns.filter(
+    (item) => item !== null && typeof item === 'object' && typeof item.text === 'string',
+  )
+  const requirementUnknowns = unknowns.filter((item) => item.kind === 'requirement')
+  const evidenceUnknowns = unknowns.filter((item) => item.kind !== 'requirement')
+
+  const evidenceRefs = review === undefined ? [] : review.evidence_refs
+  const evidenceGiven = evidenceRefs.some((ref) => {
+    const match = String(ref).match(/^(.+?):\d+/)
+    return match !== null && isKnownPath(match[1])
+  })
+
+  // 复用证据：要么真的核验通过，要么诚实说明「清单里没有可用资产」。
+  // 只认 reuses 非空会惩罚诚实 —— 模型学会的是硬凑一条资产来过关，不是真的去查清单。
+  const reuseVerdict = review === undefined ? 'missing' : review.reuse_verdict
+  const reuseReasonLen = (review === undefined ? '' : review.reuse_reason).trim().length
+  const claimsNoAsset = reuseVerdict === 'no-applicable-asset'
+  // 评审口径与实际复用清单对不上：说清单用不上却列了复用项，或者说复用了却一条都没列。
+  const reuseContradiction =
+    (claimsNoAsset && design.reuses.length > 0)
+    || (!claimsNoAsset
+      && (reuseVerdict === 'fully-reused' || reuseVerdict === 'partially-reused')
+      && design.reuses.length === 0)
+  const reuseJustified =
+    !reuseContradiction
+    && (verifiedReuses > 0
+      || (claimsNoAsset && design.reuses.length === 0 && reuseReasonLen >= 30))
+
+  // 三态裁决：只缺需求信息不该算「做不出来」，它是「等人拍板」。
+  const hardBlocked =
+    review === undefined || veto || evidenceUnknowns.length > 0 || !evidenceGiven || fabricated.length > 0
+  let decision
+  const blockedBy = []
+  if (hardBlocked) {
+    decision = 'rejected'
+    if (review === undefined) blockedBy.push('no-review')
+    if (veto) blockedBy.push('veto')
+    if (evidenceUnknowns.length > 0) blockedBy.push('evidence-unknowns')
+    if (!evidenceGiven) blockedBy.push('no-evidence-refs')
+    if (fabricated.length > 0) blockedBy.push('fabricated-reuse-path')
+  } else if (requirementUnknowns.length > 0) {
+    decision = 'blocked-on-human'
+  } else {
+    decision = 'admitted'
+  }
+  // 需求缺口单独补记：硬门优先是对的（缺证据不该放行），但若只写「缺证据」，
+  // 人就看不到这些方案还各带着一条只有他能回答的问题，下一轮又得重挖一遍。
+  // 某项目 那轮就是如此：3 个方案全部因 evidence-unknowns 被拒，同时各自还有 1–2 条需求缺口被埋掉。
+  if (requirementUnknowns.length > 0) blockedBy.push('requirement-unknowns')
+
+  checks.push({
+    design: design.name,
+    structural_choice: design.structural_choice,
+    reuse_entries: design.reuses.length,
+    reuse_verified: verifiedReuses,
+    reuse_fabricated: fabricated,
+    has_second: design.second_option.trim().length > 0,
+    reviewed: review !== undefined,
+    verdict: review === undefined ? 'missing' : review.verdict,
+    veto,
+    unknowns,
+    requirement_unknowns: requirementUnknowns,
+    evidence_unknowns: evidenceUnknowns,
+    reuse_verdict: reuseVerdict,
+    reuse_reason_len: reuseReasonLen,
+    reuse_justified: reuseJustified,
+    reuse_contradiction: reuseContradiction,
+    evidence_given: evidenceGiven,
+    ignored_list: review !== undefined && review.reuse_verdict === 'ignored-list',
+    decision,
+    // 卡住的具体原因，方便人一眼看出卡在哪
+    blocked_by: blockedBy,
+  })
+}
+
+// 方案去重：只看结构选择枚举是否两两唯一。
+// 复用集合重叠度不参与判定 —— 清单贫瘠时（例如清单里只有样式 token、没有真正相关的组件），
+// 所有方案只能复用同样那几条，Jaccard=1 反映的是清单的问题，不是方案没有发散。
+// 某项目 那轮实测：三个方案结构分别是「单行事件绑定」「复用既有提交入口」「预索引+防抖」，
+// 但因为清单里没有树/过滤资产，三家都只引了同样三条样式变量，重叠度被判 1.0 而误判不够发散。
+// 重叠度仍保留为 reuse_overlap_max 诊断字段，供人判断是不是真撞了。
+const structuralChoices = validDesigns.map((design) => normalizePath(design.structural_choice))
+const structuralDistinct = new Set(structuralChoices).size === validDesigns.length
+
+const reuseSets = validDesigns.map(
+  (design) => new Set(design.reuses.map(reusePathOf).filter((path) => path !== null)),
+)
+let maxOverlap = 0
+for (let i = 0; i < reuseSets.length; i += 1) {
+  for (let j = i + 1; j < reuseSets.length; j += 1) {
+    const a = reuseSets[i]
+    const b = reuseSets[j]
+    let shared = 0
+    for (const item of a) if (b.has(item)) shared += 1
+    const union = a.size + b.size - shared
+    const similarity = union === 0 ? 0 : shared / union
+    if (similarity > maxOverlap) maxOverlap = similarity
+  }
+}
+
+/**
+ * 把多个评审反复提到的需求歧义聚成一类。
+ * 文本不会逐字相同，用字符二元组的 Jaccard 近似判重；被 ≥2 个评审提出的才算「一致」。
+ */
+function bigrams(text) {
+  const clean = String(text).replace(/[\s，。、：；！？（）()「」『』"'`,.:;!?]/g, '')
+  const grams = new Set()
+  for (let i = 0; i < clean.length - 1; i += 1) grams.add(clean.slice(i, i + 2))
+  return grams
+}
+function similarText(a, b) {
+  const ga = bigrams(a)
+  const gb = bigrams(b)
+  if (ga.size === 0 || gb.size === 0) return 0
+  let shared = 0
+  for (const item of ga) if (gb.has(item)) shared += 1
+  return shared / (ga.size + gb.size - shared)
+}
+
+const clusters = []
+for (const check of checks) {
+  for (const item of check.requirement_unknowns) {
+    const hit = clusters.find((cluster) => similarText(cluster.text, item.text) >= 0.5)
+    if (hit === undefined) {
+      clusters.push({ text: item.text, sources: [check.design] })
+    } else if (!hit.sources.includes(check.design)) {
+      hit.sources.push(check.design)
+    }
+  }
+}
+// 被两个以上评审独立提出 = 大概率是真的问题，直接转成下一轮要问人的题。
+const consistentUnknowns = clusters.filter((cluster) => cluster.sources.length >= 2)
+
+const admittedCount = checks.filter((check) => check.decision === 'admitted').length
+const blockedCount = checks.filter((check) => check.decision === 'blocked-on-human').length
+const rejectedCount = checks.filter((check) => check.decision === 'rejected').length
+
+// 有待确认假设时，结果要显式标出来，不能让人以为已经全部敲定。
+const pendingAssumptions = spec === null ? [] : spec.assumptions
+const underAssumptions = admittedCount > 0 && pendingAssumptions.length > 0
+
+const levelCounts = { L0: 0, L1: 0, L2: 0, L3: 0 }
+for (const item of acceptance) {
+  if (item !== null && typeof item === 'object' && Object.hasOwn(levelCounts, item.level)) {
+    levelCounts[item.level] += 1
+  }
+}
+
+const verdictSummary =
+  admittedCount > 0
+    ? underAssumptions
+      ? 'admitted-under-assumptions'
+      : 'admitted'
+    : blockedCount > 0
+      ? 'blocked-on-human'
+      : 'rejected'
+
+const reqGapCount = checks.filter((check) => check.requirement_unknowns.length > 0).length
+let next = ''
+if (admittedCount > 0 && underAssumptions) {
+  next = `有 ${admittedCount} 个方案可以推进，但建立在 ${pendingAssumptions.length} 条未确认的假设上。`
+    + '先看 pending_assumptions，确认没问题再开工；任何一条不成立，对应方案要重做。'
+} else if (admittedCount > 0) {
+  next = '由人结合 gate 与 checks 里 decision=admitted 的方案选择；'
+    + 'any_ignored_existing_assets 为真时，先追问为什么不用现成资产。'
+} else if (blockedCount > 0) {
+  next = `没有方案可以开工，但缺的是需求信息不是能力（${blockedCount} 个方案只差人拍板）。`
+    + '把 next_round_questions 拿去问人，答完用 stage=design 带新 spec 重跑，不要重新发散。'
+    + '这一步记入失败库，分类为「需求误解」。'
+} else {
+  next = '所有方案都被否决或证据不足。先看 checks 里的 blocked_by 定位原因，'
+    + '再决定是补证据还是换思路；不要原样重跑。'
+  // 硬门优先是对的，但若只报告「缺证据」，人看不到这些方案还各有只有他能回答的问题。
+  if (reqGapCount > 0) {
+    next += `另外其中 ${reqGapCount} 个方案还带着需求缺口（blocked_by 里的 requirement-unknowns），`
+      + '补证据的同时把这些点一起拿去问人，别等下一轮又卡在同一个地方。'
+  }
+}
+
+return {
+  ok: true,
+  stage: 'design',
+  requirement,
+  terms: clarify !== null && Array.isArray(clarify.terms) ? clarify.terms : [],
+  spec,
+  acceptance_levels: levelCounts,
+  designs: validDesigns,
+  reviews: validReviews,
+  checks,
+  pending_assumptions: pendingAssumptions,
+  consistent_unknowns: consistentUnknowns,
+  // 下一轮要问人的题；blocked-on-human 时直接拿去用，不要重新发散。
+  next_round_questions: consistentUnknowns.map((cluster, index) => ({
+    id: `q${index + 1}`,
+    kind: 'requirement',
+    question: cluster.text,
+    raised_by: cluster.sources,
+  })),
+  verdict: verdictSummary,
+  gate: {
+    designs_expected: planItems.length,
+    designs_produced: validDesigns.length,
+    designs_admitted: admittedCount,
+    designs_blocked_on_human: blockedCount,
+    designs_rejected: rejectedCount,
+    // 「有据可依」有两种合法形态：核验过的复用，或诚实说明清单里没有可用资产。
+    all_have_reuse_evidence: checks.every((check) => check.reuse_justified),
+    all_reuse_paths_verified: checks.every((check) => check.reuse_fabricated.length === 0),
+    all_have_second_option: checks.every((check) => check.has_second),
+    all_reviewed: checks.every((check) => check.reviewed),
+    all_evidence_backed: checks.every((check) => check.evidence_given),
+    designs_are_distinct: structuralDistinct,
+    designs_with_requirement_gaps: reqGapCount,
+    structural_choices_distinct: structuralDistinct,
+    reuse_overlap_max: Math.round(maxOverlap * 100) / 100,
+    any_ignored_existing_assets: checks.some((check) => check.ignored_list),
+    any_veto: checks.some((check) => check.veto),
+    any_unknowns: checks.some((check) => check.unknowns.length > 0),
+    any_requirement_unknowns: checks.some((check) => check.requirement_unknowns.length > 0),
+    any_evidence_unknowns: checks.some((check) => check.evidence_unknowns.length > 0),
+    any_fabricated_reuse: checks.some((check) => check.reuse_fabricated.length > 0),
+    any_reuse_contradiction: checks.some((check) => check.reuse_contradiction),
+    under_assumptions: underAssumptions,
+  },
+  // 脚本不做「哪个方案最好」的判断 —— 那需要人拍板。
+  next,
+}

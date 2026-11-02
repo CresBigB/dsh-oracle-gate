@@ -1,0 +1,65 @@
+{
+  "name": "numeric",
+  "title": "数值算法",
+  "description": "求解器、仿真、数值优化一类的项目。验收的核心矛盾不是「跑通了」，而是「算得对不对、能不能比、换组输入还成不成立」——所有结论最终都要落到一个可复算的数值检查上。",
+  "detect": {
+    "files": ["CMakeLists.txt", "Makefile", "qmake.conf"],
+    "deps": ["numpy", "scipy", "pandas", "sympy", "mpmath", "eigen", "Eigen3", "blas", "lapack", "petsc", "sundials", "dolfin", "fenics", "openfoam"]
+  },
+  "perspectives": [
+    {
+      "id": "min-change",
+      "title": "最小改动",
+      "instruction": "先查 kit_inventory 里有没有现成的求解器封装、离散格式、物性表、单位换算函数可以复用。改参数、改边界条件、换一个既有求解器开关能解决的，不要动算法主体。若确实要新写求解器，说明既有结构为什么放不下。"
+    },
+    {
+      "id": "numerical-stability",
+      "title": "数值稳定性与收敛",
+      "instruction": "重点看网格与时间步的选取、收敛判据、迭代上限、病态输入的兜底、结果对离散参数是否敏感（把网格加密一档，答案会不会变）。凡是声称「更准」的，必须给出与参考解的误差指标和复算方式。"
+    },
+    {
+      "id": "performance-and-physics",
+      "title": "性能与物理正确性",
+      "instruction": "性能可以优化，但不能用降低精度换速度而不声明。任何加速都要同时给出壁钟时间与误差指标，两者一起比——只看更快不看更准，等于把正确性卖了。"
+    }
+  ],
+  "reviewers": [
+    {
+      "id": "physics-and-units",
+      "title": "物理与单位",
+      "focus": "量纲是否一致、单位换算是否正确（尤其温标 K 与 ℃）、边界条件与初始条件是否物理自洽、有没有在摄氏度上用了开尔文的差值、相对误差的分母取得是否合理。",
+      "not_checked": "代码结构与性能"
+    },
+    {
+      "id": "adversarial-and-static-regression",
+      "title": "对抗与静态回归",
+      "focus": "有没有外推（参考数据没覆盖的坐标上给答案）、有没有挑好看的采样点、老算例的输出是否逐字节不变、插值结果是否被当成原始同时刻观测来汇报。",
+      "not_checked": "物理模型是否合理"
+    },
+    {
+      "id": "implementation-and-performance",
+      "title": "实现与性能",
+      "focus": "算法复杂度、内存占用、壁钟时间与基线的比值、循环内重复分配、并行是否改变结果（浮点求和顺序）。性能收益必须同时给出误差是否变化。",
+      "not_checked": "物理正确性"
+    }
+  ],
+  "oracles_template": [
+    { "level": "L0", "criterion": "编译或构建通过", "hint": "cmake --build / qmake && nmake / make；warning 不算失败，但要记下来" },
+    { "level": "L0", "criterion": "单元测试通过", "hint": "pytest -q / ctest / 自带的数值断言测试" },
+    { "level": "L0", "criterion": "既有算例的静态输出逐字节不退化", "hint": "跑一组老输入，与冻结的输出文件做 sha256 比对；字节级一致才算没动到别处" },
+    { "level": "L1", "criterion": "最大相对误差不超过 10%", "hint": "用 kit_numeric 对参考解与候选结果做比较，分母取参考值（温标用摄氏度，不用开尔文）" },
+    { "level": "L1", "criterion": "最大相对误差落在目标值 5% 以内", "hint": "同一份比较结果里的 within_target 字段；超过目标但未超上限算可接受，不算达标" },
+    { "level": "L1", "criterion": "参考点覆盖率 100%（不允许缺坐标）", "hint": "kit_numeric 的 coverage 字段必须是 1；有未覆盖点会直接报错而不是跳过" },
+    { "level": "L1", "criterion": "壁钟时间不超过基线的 1.25 倍", "hint": "同机器、同输入、同构建类型下比较；debug 与 release 不能混比" },
+    { "level": "L2", "criterion": "与既有物理模型、单位处理、离散格式保持一致", "hint": "人工判断，评审必须引用 路径:行号 作为范本依据" }
+  ],
+  "failure_map": {
+    "requirement-misread": "「更准」可能指相对误差也可能指绝对差；「更快」可能指单步也可能指收敛到同一精度的时间。回 clarify 重新对齐口径",
+    "design": "需要换离散格式或求解器才能达到精度时，实现阶段改不动；回 design 补方案",
+    "implementation": "边界条件、单位换算、迭代判据写错；回 implement，预算走 impl 桶",
+    "evidence-gap": "拿不到参考解、没有独立数据集、基线环境缺失；回 evidence，不要用自造的理想值当过门依据",
+    "oracle-gamed": "挑采样点、缩小比较区间、把 relative_floor 调大稀释误差、改判据阈值；回 freeze 收紧并把阈值上限锁死（target ≤ 5%、maximum ≤ 10%）",
+    "infrastructure": "编译器缺失、构建目录被占用、依赖装不上；不重放，先修环境"
+  },
+  "holdout": "数值域的留出集有三种形态：① 独立参考数据——由另一个 agent 用高精度方法（解析解、加密网格、商业软件）算出的结果，开发方不可见，验收时只跑一次；② 未见工况——没给出过的参数区间、极端输入（零流量、负压差、单层网格），看是否悄悄外推或崩溃；③ 变更冲击测试——预封存 2 条未来需求（如「改用不同物性模型」「加一个时间变化的边界条件」），用改动面积衡量算法结构是否真的可扩展。留出集一旦封存，失败原因不得反馈给实现方——只能告知「未通过」，否则等于把答案递过去。"
+}

@@ -1,0 +1,16 @@
+# dsh-oracle-gate bundle patch: mounts the oracle-gate plugin into the host
+# composition of a dsh profile. The plugin registers its `kit_*` tools into the
+# shared `tools` registry so any session of the profile can drive the
+# deterministic acceptance-gate tools.
+#
+# Install: `dsh plugin --profile <name> add <this package>` (npm or a local
+# path). The `dsh plugin` command pnpm-installs the package into the profile
+# and reconciles it into the profile's `dsh.profile.bundles` layer list.
+- insert:
+    - id: oracle-gate
+      # Node-resolvable package name — must stay in sync with package.json
+      # `name`.
+      name: 'dsh-oracle-gate'
+      config:
+        # Gate artifacts live under `<session workspace>/<stateDir>/<runId>/`
+        stateDir: .protocol-kit

@@ -1,0 +1,39 @@
+{
+  "name": "dsh-oracle-gate",
+  "version": "0.1.0",
+  "description": "Freeze the acceptance criteria first, then honor only execution receipts. An acceptance gate plugin for DSH (DeepSeek Harness).",
+  "type": "module",
+  "main": "src/index.js",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "test-oracle",
+    "acceptance-gate",
+    "agent-workflow"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CresBigB/dsh-oracle-gate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CresBigB/dsh-oracle-gate/issues"
+  },
+  "homepage": "https://github.com/CresBigB/dsh-oracle-gate#readme",
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0-0"
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "name": "architecture",
+  "title": "架构设计",
+  "description": "模块划分、依赖方向、扩展点、迁移路径。验收对象不是运行结果而是结构本身：测试能证明「没坏」，但证明不了「这样划边界是对的」。所以硬门只能验回归，真正的判断在评审与留出集。",
+  "detect": {
+    "files": ["ARCHITECTURE.md", "docs/adr", "CONTEXT.md", "tsconfig.json", "nx.json", "turbo.json", "lerna.json", "pnpm-workspace.yaml", "go.mod", "Cargo.toml"],
+    "deps": [
+      "dependency-cruiser", "madge", "eslint-plugin-boundaries", "eslint-plugin-import", "@nx/workspace", "turbo", "nx",
+      "import-linter", "pydeps", "archunit", "spring-modulith"
+    ]
+  },
+  "perspectives": [
+    {
+      "id": "min-change",
+      "title": "最小改动",
+      "instruction": "先问现有结构是不是已经能装下这个需求：能不能放进既有模块、既有分层、既有扩展点。能不新建层/模块/包就不建。若必须新建，说明既有结构具体哪一点放不下（引用 路径:行号）。反过来也要防过度设计——为「将来可能会有」的需求预留抽象，同样是失败。"
+    },
+    {
+      "id": "boundary-first",
+      "title": "边界优先",
+      "instruction": "先定模块边界与依赖方向，再谈实现。判断标准是「什么会一起变」：会一起变的东西放在同一边界内，不相关的东西不要捆在一起。明确写出每个新边界允许被谁依赖、禁止依赖谁。依赖必须是单向的，且能用一个可执行的检查表达（如 dependency-cruiser 规则、import-linter 契约）。"
+    },
+    {
+      "id": "evolution",
+      "title": "演化与可回滚",
+      "instruction": "方案要能分阶段落地：第一阶段的产物独立可用，中途停下不会留下半成品。每条阶段说清「这一步之后系统能做什么、不能做什么」。同时给出回退路径：出问题时怎么退回上一步，数据/接口是否需要兼容过渡期。"
+    }
+  ],
+  "reviewers": [
+    {
+      "id": "dependency-and-layering",
+      "title": "依赖与分层",
+      "focus": "依赖方向是否单向且稳定、有没有引入环、有没有跨层直接调用（如 domain 直接依赖 infra 细节）、公共接口（export）的增减是否合理、新边界是否真的隔离了变化。",
+      "not_checked": "运行期行为、性能"
+    },
+    {
+      "id": "failure-and-consistency",
+      "title": "失败模式与一致性边界",
+      "focus": "错误在哪里被转换、事务/一致性边界落在哪一层、部分失败如何收敛、外部调用失败时重试与降级归属谁。边界模糊时这些会散落各处。",
+      "not_checked": "部署与运维"
+    },
+    {
+      "id": "operability",
+      "title": "可运维性与迁移",
+      "focus": "可观测性（日志/指标挂在哪一层）、配置注入方式、数据迁移是否需要停机、能否灰度、回滚代价。同时检查是否过度设计：为未发生的需求预留的抽象也要被追问。",
+      "not_checked": "代码风格与命名"
+    }
+  ],
+  "oracles_template": [
+    { "level": "L0", "criterion": "编译或类型检查通过", "hint": "tsc --noEmit / go build ./... / cargo check" },
+    { "level": "L0", "criterion": "既有测试全部通过（行为不变）", "hint": "重构类改动的最低门槛：先证明没改坏" },
+    { "level": "L1", "criterion": "依赖图无环", "hint": "madge --circular / dependency-cruiser / import-linter / go list -deps" },
+    { "level": "L1", "criterion": "分层规则无违规", "hint": "把方案里声明的依赖方向写成可执行规则（dependency-cruiser 的 forbidden 规则、import-linter 的 contract），跑一遍必须 0 违规" },
+    { "level": "L1", "criterion": "公共接口变更数不超过 N", "hint": "对比改动前后各包 export 的数量与签名；膨胀意味着边界没起到隔离作用" },
+    { "level": "L1", "criterion": "改动面积不超过 X 个文件 / Y 个目录", "hint": "结构调整的改动面应当与结论相称；一处小改动波及全仓通常说明边界划错了" },
+    { "level": "L2", "criterion": "边界划分与既有分层一致", "hint": "人工判断，评审必须引用 路径:行号 作为既有范本；有意偏离要写明理由" },
+    { "level": "L2", "criterion": "错误处理与一致性边界有明确归属", "hint": "人工判断：每类错误在哪一层被处理、事务边界在哪、部分失败怎么收敛" },
+    { "level": "L3", "criterion": "结构是否一眼可讲清", "hint": "人工判断：能不能用三句话说清「谁依赖谁、改动落在哪、新东西加在哪」" }
+  ],
+  "failure_map": {
+    "requirement-misread": "「重构」可能指行为不变的整理，也可能指换实现；「拆分」可能指拆包也可能指拆进程。两种的验收完全不同，回 clarify 问清",
+    "design": "边界定错：把会一起变的东西分到两边，或把不相关的东西捆一起。实现阶段无法挽回，只能重来",
+    "implementation": "照图施工走样：多出一条跨层调用、多了一个环、扩展点被绕过直接改内部。回 implement，并用依赖规则判据抓出来",
+    "evidence-gap": "没有依赖图、没有改动记录、没有既有模块清单，全靠印象评估结构。回 evidence，先跑一次依赖分析",
+    "oracle-gamed": "用「加一层薄转发」把违规藏起来、只改命名不改依赖方向、或把跨层调用包装成「工具函数」；回 freeze 把依赖规则收紧到具体路径",
+    "infrastructure": "依赖分析工具装不上、构建环境缺失、仓库过大导致分析超时；不重放，先修环境或缩小分析范围"
+  },
+  "holdout": "架构域的留出集有三种形态。① **变更冲击测试（最主要的一种）**——在设计开始前，由另一个 agent 依原始需求写下 2–3 条「未来很可能出现的需求」（如「要支持导出」「要按租户隔离」），开发方不可见；方案出来后只问一个问题：**这几条需求各要改哪些文件、跨几个模块边界、动不动公共接口**。好的边界让变化局部化，坏的边界会让每条未来需求都演变成一次重构。注意这是估算加评审，不是编译级硬门，所以只能放在留出集、不能当判据用。② **隐藏约束**——预封存若干非功能性约束（数据量增长 10 倍、要能部署到两个区域、某依赖将被废弃），看方案是否把它们全部堵死。③ **反向冲击**——故意提出一条「不该被支持」的需求（如「让前端直接连数据库」），一个健康的架构应当明确拒绝它；如果方案「也能支持」，说明边界没有守卫。隔离强度只到 trusted-shared-fs，同账号恶意程序不在防护范围内。"
+}

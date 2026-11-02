@@ -1,0 +1,71 @@
+{
+  "name": "frontend",
+  "title": "前端界面",
+  "description": "Web/桌面端界面、组件、样式。验收的核心矛盾是「与既有界面是否一致」和「各种状态是否都有交代」，而不是某个单一指标 —— 一个能跑但长得不像这个项目的界面，等于没做完。",
+  "detect": {
+    "files": ["index.html", "vite.config.ts", "vite.config.js", "next.config.js", "nuxt.config.ts", "angular.json", "svelte.config.js", "tailwind.config.js", "postcss.config.js"],
+    "deps": [
+      "react", "react-dom", "vue", "@angular/core", "svelte",
+      "next", "nuxt", "vite",
+      "element-plus", "ant-design-vue", "naive-ui", "@mui/material", "vuetify",
+      "tailwindcss", "styled-components", "@emotion/react"
+    ]
+  },
+  "perspectives": [
+    {
+      "id": "min-change",
+      "title": "最小改动",
+      "instruction": "先查 kit_inventory 返回的资产段与「与 focus 相关的既有文件」段，确认要做的界面元素是不是已经有了。特别注意两种情况：① 同目录下已有一批同构组件（往往只差一个 prop）；② 已实现但全仓零引用的组件 —— 这类最容易被忽略，某项目 那次需求要「按井名实时过滤树」，项目里 WellBrowser.vue 早就实现了过滤+自动展开+虚拟滚动，但全仓没有任何 import，三个设计者都没发现它，三个评审都独立发现了。若你选择不启用它，必须写明理由。"
+    },
+    {
+      "id": "design-consistency",
+      "title": "一致性优先",
+      "instruction": "颜色、间距、圆角、字号、阴影、过渡时长，一律优先用项目已有的 CSS 变量 / SCSS 变量 / 设计 token，不要硬编码十六进制或 px。kit_inventory 的「既有样式约定」段列出了扫描到的变量，请在方案里点名你要用的那几个（带 路径:行号）。确实需要新变量时，说明为什么现有变量覆盖不了，并给出存放位置。"
+    },
+    {
+      "id": "perf-and-a11y",
+      "title": "性能与可访问性",
+      "instruction": "关注首屏体积增量、长列表是否虚拟滚动、图片是否懒加载、键盘可达性与焦点管理、语义标签与 aria。凡声称「不会卡」的，给出可量化验收方式（包体积差、渲染耗时分位数、列表节点数上限），不要用「应该够快」这类断言。"
+    }
+  ],
+  "reviewers": [
+    {
+      "id": "visual-consistency",
+      "title": "视觉与样式一致性",
+      "focus": "间距/颜色/字号/圆角是否与既有页面一致，是否有硬编码的十六进制或魔法数字，是否复用了既有组件而不是重画一个。必须引用既有组件的 路径:行号 作为对照范本。",
+      "not_checked": "业务逻辑正确性、性能指标"
+    },
+    {
+      "id": "state-completeness",
+      "title": "状态完整性",
+      "focus": "加载中、空数据、出错、无权限、超长文本、窄屏/大屏、深色模式，每个状态是否都有 UI 交代；有没有出现「数据没回来时一片空白」或「错误被吞掉」的情况。",
+      "not_checked": "视觉细节与代码风格"
+    },
+    {
+      "id": "interaction-and-a11y",
+      "title": "交互与可访问性",
+      "focus": "键盘能否完成主要操作、焦点顺序是否合理、有无 aria 标签、语义标签是否用对、输入是否有防抖且 IME 合成期间不误触发、快速连续操作是否出现竞态。",
+      "not_checked": "样式是否好看（那属于 L3 人类品味）"
+    }
+  ],
+  "oracles_template": [
+    { "level": "L0", "criterion": "类型检查通过", "hint": "vue-tsc --noEmit / tsc --noEmit" },
+    { "level": "L0", "criterion": "单元测试通过", "hint": "vitest run / jest" },
+    { "level": "L0", "criterion": "生产构建成功", "hint": "vite build / next build，注意构建警告也要看" },
+    { "level": "L1", "criterion": "axe 扫描无 critical/serious 违规", "hint": "@axe-core/playwright 或 axe-core CLI，对改动页面跑一遍并保存结果 JSON" },
+    { "level": "L1", "criterion": "包体积增量不超过基线的 X%", "hint": "构建产物 gzip 后与基线比较，注意区分首屏 chunk 与懒加载 chunk" },
+    { "level": "L1", "criterion": "改动页面截图与基线无差异（或差异像素比低于 X‰）", "hint": "Playwright 截图 + pixelmatch，基线必须纳入冻结快照，禁止在实现里改基线" },
+    { "level": "L1", "criterion": "长列表渲染耗时分位数不超过 X 毫秒", "hint": "Performance API 打点，用真实规模数据（不是 10 条假数据）" },
+    { "level": "L2", "criterion": "与既有页面的样式约定一致", "hint": "人工判断，评审必须引用既有组件的 路径:行号 作为对照范本，并说明用的哪个 CSS 变量" },
+    { "level": "L2", "criterion": "全部界面状态都有交代", "hint": "人工判断，评审逐项核对加载中/空/错误/无权限/超长文本/窄屏" }
+  ],
+  "failure_map": {
+    "requirement-misread": "需求里的「加一个搜索框」「列表」可能指改造既有界面而非新建；回 clarify 重新对齐（某项目 那次就是「下面的井列表」到底指四级树还是中间算例列表没说清）",
+    "design": "需要新的全局样式变量、新组件库、或要动既有布局骨架时，实现阶段改不动；回 design 补方案",
+    "implementation": "样式硬编码、状态漏了、事件绑定错；回 implement，预算走 impl 桶",
+    "evidence-gap": "没有设计稿、没有真实规模数据、没有基线截图与包体积基线；回 evidence，不要用假数据过门",
+    "oracle-gamed": "截图基线被改、测试被删或只跑部分页面、把判据里的阈值调松；回 freeze 收紧判据并把基线纳入冻结范围",
+    "infrastructure": "浏览器没装、Playwright 依赖装不上、端口占用；不重放，先修环境"
+  },
+  "holdout": "前端域的留出集有三种形态：① 隐藏验收用例 —— 由另一个 agent 仅依需求文字写 Playwright 端到端用例（点击、输入、断言可见性），开发方不可见，合并前只跑一次；这能抓住「自测时手点的路径」与「文字描述的路径」不一致的情况；② 隐藏场景 —— 需求里没提但真实用户会遇到的：超长中文/英文单词、空列表、2000 条数据、窄屏 360px、慢网络下加载态、深色模式；③ 变更冲击测试 —— 预封存 2 条未来需求（如「这个列表要支持导出」「要支持多选后批量操作」），用改动面积衡量组件接口是否真的可扩展。隔离强度只到 trusted-shared-fs，同账号恶意程序不在防护范围内。"
+}

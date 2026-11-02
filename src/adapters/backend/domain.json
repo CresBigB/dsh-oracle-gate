@@ -1,0 +1,72 @@
+{
+  "name": "backend",
+  "title": "后端服务",
+  "description": "HTTP/API 服务、数据库访问、后台任务。验收的核心矛盾是「契约是否守住」与「数据是否一致」，而不是某个数值指标。",
+  "detect": {
+    "files": ["go.mod", "Cargo.toml", "pom.xml", "build.gradle", "requirements.txt", "pyproject.toml", "Gemfile"],
+    "deps": [
+      "express", "fastify", "koa", "@nestjs/core", "hapi", "@hono/node-server",
+      "fastapi", "django", "flask",
+      "github.com/gin-gonic/gin", "github.com/labstack/echo",
+      "actix-web", "axum",
+      "spring-boot-starter-web"
+    ]
+  },
+  "perspectives": [
+    {
+      "id": "min-change",
+      "title": "最小改动",
+      "instruction": "先查 kit_inventory 里有没有现成的路由/服务/仓储/工具函数可以复用；能挂在既有分层里的，不新建模块。若确实需要新模块，说明为什么既有结构放不下。"
+    },
+    {
+      "id": "consistency",
+      "title": "一致性优先",
+      "instruction": "错误处理、日志、鉴权、事务边界、DTO 校验、分页约定，都要跟项目现有代码一致；找出既有代码里的范本并给出 路径:行号。有意偏离的，写明理由。"
+    },
+    {
+      "id": "performance-and-ops",
+      "title": "性能与长期维护",
+      "instruction": "重点看查询数（N+1）、索引是否命中、缓存失效策略、分页上限、可观测性（日志字段/指标）。凡是声称「更快」的，给出可量化的验收指标与测量方式，不要用「应该会快」这类断言。"
+    }
+  ],
+  "reviewers": [
+    {
+      "id": "contract",
+      "title": "API 契约与兼容性",
+      "focus": "请求/响应结构、字段新增是否破坏旧客户端、状态码语义、错误体格式、是否需要迁移脚本或版本号。",
+      "not_checked": "性能与内部实现细节"
+    },
+    {
+      "id": "data",
+      "title": "数据一致性与并发",
+      "focus": "事务边界是否覆盖全部写入、幂等性（重试会不会写重）、部分失败如何回滚、并发写冲突、唯一约束与索引。",
+      "not_checked": "HTTP 层契约与鉴权"
+    },
+    {
+      "id": "security",
+      "title": "安全与故障处理",
+      "focus": "鉴权与越权、输入校验与注入、超时/重试/熔断、资源泄漏（连接、游标）、错误信息是否泄漏内部细节。",
+      "not_checked": "数据模型设计是否合理"
+    }
+  ],
+  "oracles_template": [
+    { "level": "L0", "criterion": "编译或类型检查通过", "hint": "tsc --noEmit / go build ./... / cargo check / mvn -q compile" },
+    { "level": "L0", "criterion": "单元测试通过", "hint": "pnpm test / go test ./... / pytest -q / cargo test" },
+    { "level": "L0", "criterion": "API 契约测试通过", "hint": "OpenAPI schema 校验，或 Pact 消费者契约测试" },
+    { "level": "L0", "criterion": "数据库迁移可正反向执行", "hint": "migrate up && migrate down，确认回滚不丢数据" },
+    { "level": "L1", "criterion": "p95 延迟不超过基线的 X 倍", "hint": "压测工具输出 p95/p99，与基线同负载同数据量比较" },
+    { "level": "L1", "criterion": "错误率不超过 X%", "hint": "压测期间 5xx 占比；注意区分业务错误与系统错误" },
+    { "level": "L1", "criterion": "接口查询数不超过 X（无 N+1）", "hint": "ORM 查询计数中间件，或按 SQL 日志统计单请求查询条数" },
+    { "level": "L1", "criterion": "变异测试分数不低于 X", "hint": "验证测试真的能发现问题，而不是只跑通" },
+    { "level": "L2", "criterion": "与既有分层/错误处理/鉴权约定一致", "hint": "人工判断，评审必须引用 路径:行号 作为范本依据" }
+  ],
+  "failure_map": {
+    "requirement-misread": "需求方说的「接口」可能指已有接口改造而非新增；回 clarify 重新对齐",
+    "design": "需要新表/新索引/新服务边界时，实现阶段改不动；回 design 补方案",
+    "implementation": "逻辑写错或漏了分支；回 implement，预算走 impl 桶",
+    "evidence-gap": "拿不到真实数据、压测环境或基线；回 evidence，不要用编造的数字过门",
+    "oracle-gamed": "判据被绕过（改了测试、写死返回值、只跑部分用例）；回 freeze 收紧判据并把测试纳入冻结范围",
+    "infrastructure": "环境缺失、端口占用、依赖装不上；不重放，先修环境"
+  },
+  "holdout": "后端域的留出集有三种形态：① 隐藏契约用例——由另一个 agent 依需求写 Pact 或端到端用例，开发方不可见，合并前只跑一次；② 故障注入——超时、连接池耗尽、下游 5xx、并发写冲突，看是否留下脏数据；③ 变更冲击测试——预封存 2 条未来需求（如「加一个按时间范围过滤」），用改动面积衡量分层是否真的可扩展。隔离强度只到 trusted-shared-fs，同账号恶意程序不在防护范围内。"
+}
