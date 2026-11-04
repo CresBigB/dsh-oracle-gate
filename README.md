@@ -22,7 +22,7 @@ DSH（DeepSeek Harness）插件。目标只有一句话：**让「做完了」�
 
 四步，每一步都堵死一种作弊路径。
 
-### 1. 冻结 `kit_freeze`
+### 1. 冻结 `oracle_gate_freeze`
 
 把判据写进 `<workspace>/.protocol-kit/<run_id>/oracles.json`，同时记录**内容哈希**。冻结后：
 
@@ -30,7 +30,7 @@ DSH（DeepSeek Harness）插件。目标只有一句话：**让「做完了」�
 - 判据里点到的每个本地文件（脚本、数据、基线）都会记下 `sha256` + 字节数
 - 冻结之后**一行代码都还没写**，门槛就先定死了
 
-### 2. 执行 `kit_exec`
+### 2. 执行 `oracle_gate_exec`
 
 只接受**判据 id**，不接受临时指定的命令。
 
@@ -38,7 +38,7 @@ DSH（DeepSeek Harness）插件。目标只有一句话：**让「做完了」�
 
 预算在预留阶段就消耗，失败不退。
 
-### 3. 裁决 `kit_gate`
+### 3. 裁决 `oracle_gate_gate`
 
 把「真实执行回执」和「人工/LLM 评审结论」分开收集，再统一裁决。四种结果：
 
@@ -51,7 +51,7 @@ DSH（DeepSeek Harness）插件。目标只有一句话：**让「做完了」�
 
 人工判据的结论必须以结构化形式传入，并带 `evidence_refs`。评审说自己过了但给不出引用，就是没过。
 
-### 4. 归因 `kit_failures`
+### 4. 归因 `oracle_gate_failures`
 
 每类失败绑定固定的回退目标，避免「所有失败都当成 bug 再实现一遍」：
 
@@ -80,38 +80,49 @@ check-pass.mjs：期望 7678979105da…，实际 58eee9e63492…
 
 ## 工具清单
 
-11 个工具，前缀 `kit_` 是早期名字 `protocol-kit` 的遗留，功能上属于本插件，改名时保留以保持与既有产物的兼容。
+12 个工具，统一前缀 `oracle_gate_`。**不确定该用哪个时先调 `oracle_gate`** —— 它扫一遍台账，告诉你每个 run 卡在哪一步、下一步该调谁。
+
+### 总入口
+
+| 工具 | 作用 |
+|---|---|
+| `oracle_gate` | 验收台账总入口：列出项目里全部 run 的裁决状态与下一步建议。无参数也能调（缺省用当前目录），严格只读 |
 
 ### 执行内核
 
 | 工具 | 作用 |
 |---|---|
-| `kit_freeze` | 冻结判据。支持直接传 `oracles`，或传 `acceptance` 由 `src/kernel/compile.js` 编译；`dry_run` 只编译不落盘 |
-| `kit_exec` | 按判据 id 执行，写回执 |
-| `kit_gate` | 四态裁决 |
-| `kit_failures` | 记录 / 检索失败归因 |
+| `oracle_gate_freeze` | 冻结判据。支持直接传 `oracles`，或传 `acceptance` 由 `src/kernel/compile.js` 编译；`dry_run` 只编译不落盘 |
+| `oracle_gate_exec` | 按判据 id 执行，写回执 |
+| `oracle_gate_gate` | 四态裁决 |
+| `oracle_gate_failures` | 记录 / 检索失败归因 |
 
 ### 查看进度
 
 | 工具 | 作用 |
 |---|---|
-| `kit_status` | 一次回答「这个 run 跑到哪一步」：哪些判据通过/失败/未跑、七个预算桶各剩多少、下一步该做什么。纯只读，连查三次字节不变 |
+| `oracle_gate_status` | 一次回答「这个 run 跑到哪一步」：哪些判据通过/失败/未跑、七个预算桶各剩多少、下一步该做什么。纯只读，连查三次字节不变 |
 
 ### 设计决策（动手前）
 
 | 工具 | 作用 |
 |---|---|
-| `kit_ping` | 通路自检 |
-| `kit_inventory` | 扫描项目既有资产，产出带 `路径:行号` 的证据清单 |
-| `kit_design` | 生成 P1–P4 决策协议脚本（需求澄清 → 强制发散 → 对抗评审 → 收敛裁决） |
-| `kit_run` | 直接执行 P1–P4，省掉脚本搬运 |
-| `kit_domain` | 领域包 list / show（backend、frontend、numeric、architecture） |
+| `oracle_gate_inventory` | 扫描项目既有资产，产出带 `路径:行号` 的证据清单 |
+| `oracle_gate_design` | 生成 P1–P4 决策协议脚本（需求澄清 → 强制发散 → 对抗评审 → 收敛裁决） |
+| `oracle_gate_run` | 直接执行 P1–P4，省掉脚本搬运 |
+| `oracle_gate_domain` | 领域包 list / show（backend、frontend、numeric、architecture） |
 
 ### 数值
 
 | 工具 | 作用 |
 |---|---|
-| `kit_numeric` | 比较两条曲线，给相对误差、覆盖率、最差点。即时比较，不记账不裁决 |
+| `oracle_gate_numeric` | 比较两条曲线，给相对误差、覆盖率、最差点。即时比较，不记账不裁决 |
+
+### 诊断
+
+| 工具 | 作用 |
+|---|---|
+| `oracle_gate_ping` | 插件自检：版本、挂载配置、各服务是否可见。排查「装了没 / 报错是不是插件引起」时用 |
 
 ---
 
@@ -119,7 +130,7 @@ check-pass.mjs：期望 7678979105da…，实际 58eee9e63492…
 
 ```js
 // 1. 冻结：先把门槛定死，此时实现代码一行没写
-kit_freeze({
+oracle_gate_freeze({
   root: "/abs/path/to/project",
   run_id: "add-pagination",
   acceptance: [
@@ -130,17 +141,17 @@ kit_freeze({
 })
 
 // 2. 执行
-kit_exec({ root: "...", run_id: "add-pagination", oracle_id: "L0-typecheck" })
+oracle_gate_exec({ root: "...", run_id: "add-pagination", oracle_id: "L0-typecheck" })
 
 // 3. 裁决（人工判据的结论由人/另一 agent 给出）
-kit_gate({
+oracle_gate_gate({
   root: "...",
   run_id: "add-pagination",
   reviews: [{ oracle_id: "L2-style", verdict: "pass", veto: false, evidence_refs: ["src/table.tsx:12"] }]
 })
 
 // 4. 随时看进度
-kit_status({ root: "...", run_id: "add-pagination" })
+oracle_gate_status({ root: "...", run_id: "add-pagination" })
 ```
 
 产物落在 `.protocol-kit/<run_id>/`：
@@ -236,7 +247,7 @@ src/
 │   ├── run.js            # run 目录约定
 │   └── scan.js           # 文件遍历与分类
 ├── protocols/            # P0 资产盘点、P1–P4 设计协议
-└── tools/                # 11 个工具的实现
+└── tools/                # 12 个工具的实现
 ```
 
 领域包只影响「设计阶段注入哪些视角与验收维度」，**执行内核完全不知道领域包的存在**。

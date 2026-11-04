@@ -1,5 +1,5 @@
 /**
- * `kit_failures`：记录与检索失败。
+ * `oracle_gate_failures`：记录与检索失败。
  *
  * 它存在的理由不是「留个日志」，而是让失败有归因：每一类失败都绑定了该回到哪一段。
  * 没有这个绑定，所有失败都会退化成「再实现一遍」，而判据定错的那些会永远修不好。
@@ -35,8 +35,8 @@ const OUT_SCHEMA = {
 export function registerFailuresTool(ctx) {
   ctx.tools.register(
     defineTool({
-      name: 'kit_failures',
-      title: '失败归因库（kit_failures）',
+      name: 'oracle_gate_failures',
+      title: '失败归因库（oracle_gate_failures）',
       description:
         `记录或检索失败。每类失败绑定固定的回退目标，避免「所有失败都当成 bug 再实现一遍」。可选类别与回退目标：${
           Object.entries(RETRY_TARGET).map(([kind, target]) => `${kind}→${target}`).join('、')
@@ -79,7 +79,7 @@ export function registerFailuresTool(ctx) {
             '',
             value.next_step,
           ].filter((line) => line !== '').join('\n')
-          : `kit_failures 失败：${value.summary || value.error}`,
+          : `oracle_gate_failures 失败：${value.summary || value.error}`,
         }],
       },
       async execute(args) {

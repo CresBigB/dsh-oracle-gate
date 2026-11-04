@@ -16,7 +16,7 @@
     {
       "id": "min-change",
       "title": "最小改动",
-      "instruction": "先查 kit_inventory 里有没有现成的路由/服务/仓储/工具函数可以复用；能挂在既有分层里的，不新建模块。若确实需要新模块，说明为什么既有结构放不下。"
+      "instruction": "先查 oracle_gate_inventory 里有没有现成的路由/服务/仓储/工具函数可以复用；能挂在既有分层里的，不新建模块。若确实需要新模块，说明为什么既有结构放不下。"
     },
     {
       "id": "consistency",

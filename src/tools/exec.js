@@ -1,5 +1,5 @@
 /**
- * `kit_exec`：按冻结判据 id 执行命令。
+ * `oracle_gate_exec`：按冻结判据 id 执行命令。
  *
  * 它刻意不接受 command 参数。命令只可能来自冻结过的 oracles.json —— 这是整个内核
  * 唯一值得叫「铁律」的地方：如果执行时可以临时给命令，那冻结就没意义，agent 完全
@@ -52,10 +52,13 @@ const EMPTY = {
 export function registerExecTool(ctx) {
   ctx.tools.register(
     defineTool({
-      name: 'kit_exec',
-      title: '按冻结判据执行（kit_exec）',
+      name: 'oracle_gate_exec',
+      title: '按冻结判据执行（oracle_gate_exec）',
       description:
-        '按已冻结的判据 id 执行一条命令：先过账本预留（预留即消耗，不退款），再用不经过 shell 的 spawn 执行，最后把退出码、输出哈希、耗时写成回执。命令只能来自 kit_freeze 冻结过的判据，本工具不接受临时指定的命令。账本余额不足时直接拒绝执行。',
+        '冻结之后每一次实际执行都要经过我。'
+        + '按已冻结的判据 id 跑一条命令：先过账本预留（预留即消耗，失败也不退），再用不经过 shell 的 spawn 执行，最后把退出码、输出哈希、耗时写成回执。'
+        + '判据没跑过就是「未执行」，不会被当成通过——所以别拿自己随手跑的输出去替代我。'
+        + '只在 oracle_gate_freeze 冻结之后调用；不接受临时指定的命令；账本余额不足时直接拒绝执行。',
       parameters: {
         root: { type: 'string', required: true, description: '项目根目录绝对路径（与冻结时相同）。' },
         run_id: { type: 'string', required: true, description: '冻结时使用的 run_id。' },
@@ -81,7 +84,7 @@ export function registerExecTool(ctx) {
             `剩余预算：${JSON.stringify(value.remaining_budget)}`,
             value.next_step,
           ].filter((line) => line !== '').join('\n')
-          : `kit_exec 失败：${value.summary || value.error}`,
+          : `oracle_gate_exec 失败：${value.summary || value.error}`,
         }],
       },
       async execute(args) {
@@ -110,7 +113,7 @@ export function registerExecTool(ctx) {
         if (!loaded.ok) {
           const reason =
             loaded.error === 'not-frozen'
-              ? `run_id「${runId}」还没有冻结判据，请先调用 kit_freeze。`
+              ? `run_id「${runId}」还没有冻结判据，请先调用 oracle_gate_freeze。`
               : loaded.error === 'hash-mismatch'
                 ? `oracles.json 在冻结后被修改过（期望 ${loaded.expected?.slice(0, 20)}…，实际 ${loaded.actual?.slice(0, 20)}…），本次运行作废。`
                 : `判据不可用：${loaded.error}`
@@ -128,7 +131,7 @@ export function registerExecTool(ctx) {
         }
         if (oracle.manual) {
           return bad(
-            `判据「${oracleId}」是人工判据（${oracle.level}），不能由 kit_exec 执行；请评审给出结论后通过 kit_gate 的 reviews 传入。`,
+            `判据「${oracleId}」是人工判据（${oracle.level}），不能由 oracle_gate_exec 执行；请评审给出结论后通过 oracle_gate_gate 的 reviews 传入。`,
             'manual-oracle',
             { oracle_id: oracleId },
           )
@@ -201,8 +204,8 @@ export function registerExecTool(ctx) {
           remaining_budget: reserved.remaining,
           next_step:
             verdict === 'passed'
-              ? '继续执行下一条判据，全部跑完后调用 kit_gate。'
-              : '失败就记进 kit_failures 并归类（实现缺陷回 implement，判据本身定错回 freeze 开新 run，基础设施问题不重放）。注意这次额度已经花掉了，不会退还。',
+              ? '继续执行下一条判据，全部跑完后调用 oracle_gate_gate。'
+              : '失败就记进 oracle_gate_failures 并归类（实现缺陷回 implement，判据本身定错回 freeze 开新 run，基础设施问题不重放）。注意这次额度已经花掉了，不会退还。',
           error: '',
         }
       },

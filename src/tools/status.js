@@ -1,7 +1,7 @@
 /**
- * `kit_status`：一条命令回答「这个 run 跑到哪一步」。
+ * `oracle_gate_status`：一条命令回答「这个 run 跑到哪一步」。
  *
- * 与 kit_gate 的分工：kit_gate 回答「能不能准入」，kit_status 回答「现在到哪了」。
+ * 与 oracle_gate_gate 的分工：oracle_gate_gate 回答「能不能准入」，oracle_gate_status 回答「现在到哪了」。
  * 两者共用同一个 evaluateGate，所以不会出现「进度说绿、裁决说红」的两套真相；
  * 但表面契约分开，调用方不会把某个工具的 verdict 误当成另一件事的结论。
  *
@@ -21,7 +21,7 @@ import { renderRunStatus, summarizeRunStatus } from '../kernel/status.js'
 // （实际是 not-frozen / hash-mismatch / corrupted），等于提示行恒为空 —— 评审
 // 2026-11-01 notes 指出的死分支。
 const ORACLE_ERROR_HINT = {
-  'not-frozen': '先确认这个 run 已经用 kit_freeze 冻结过判据。',
+  'not-frozen': '先确认这个 run 已经用 oracle_gate_freeze 冻结过判据。',
   'hash-mismatch': 'oracles.json 在冻结后被改过，本次运行作废；要改判据请开新的 run_id 重新冻结。',
   corrupted: 'oracles.json 存在但内容坏了，检查文件是否被截断或写坏。',
 }
@@ -75,17 +75,20 @@ const EMPTY = {
 export function registerStatusTool(ctx) {
   ctx.tools.register(
     defineTool({
-      name: 'kit_status',
-      title: '查看某个 run 的进度（kit_status）',
+      name: 'oracle_gate_status',
+      title: '查看某个 run 的进度（oracle_gate_status）',
       description:
-        '只读聚合：一次回答「这个 run 跑到哪一步」—— 哪些判据通过/失败/未跑、7 个预算桶各剩多少、人工判据是什么状态、下一步该做什么。取代手翻 ledger.jsonl + oracles.json + receipts/ 三处自己拼。不写盘、不占预算。人工判据的结论可选通过 reviews 传入，不传时按「未传入评审」计。',
+        '回答「这个 run 现在到哪了」：哪些判据过 / 挂 / 没跑、7 个预算桶各剩多少、人工判据什么状态、下一步该做什么。'
+        + '用户问进度、或者你不确定还有哪条没跑时用它，一次替代手翻 ledger.jsonl + oracles.json + receipts/ 三处。'
+        + '只要知道 run_id 就能调；不确定项目里有哪些 run 就先调 oracle_gate。'
+        + '严格只读：不写盘、不占预算。人工判据结论可选通过 reviews 传入，不传按「未传入评审」计。',
       parameters: {
         root: { type: 'string', required: true, description: '项目根目录绝对路径（与冻结时相同）。' },
-        run_id: { type: 'string', required: true, description: '冻结时使用的 run_id（必填，与 kit_gate / kit_exec 一致）。' },
+        run_id: { type: 'string', required: true, description: '冻结时使用的 run_id（必填，与 oracle_gate_gate / oracle_gate_exec 一致）。' },
         reviews: {
           type: 'json',
           description:
-            '可选：人工判据的评审结论，格式与 kit_gate 的 reviews 完全一致（数组或按判据 id 索引的对象）。不传时人工判据一律按「未传入评审」计，不声称「正在等人评」。',
+            '可选：人工判据的评审结论，格式与 oracle_gate_gate 的 reviews 完全一致（数组或按判据 id 索引的对象）。不传时人工判据一律按「未传入评审」计，不声称「正在等人评」。',
         },
       },
       output: {
@@ -93,7 +96,7 @@ export function registerStatusTool(ctx) {
         render: (_args, value) =>
           value.ok
             ? [{ type: 'text', text: value.markdown }]
-            : [{ type: 'text', text: `kit_status 失败：${value.summary || value.error}\n${ORACLE_ERROR_HINT[value.error] ?? ''}`.trim() }],
+            : [{ type: 'text', text: `oracle_gate_status 失败：${value.summary || value.error}\n${ORACLE_ERROR_HINT[value.error] ?? ''}`.trim() }],
       },
       async execute(args) {
         const bad = (summary, error) => ({ ...EMPTY, summary, error })

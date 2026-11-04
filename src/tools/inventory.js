@@ -1,5 +1,5 @@
 /**
- * `kit_inventory` 工具注册。
+ * `oracle_gate_inventory` 工具注册。
  *
  * P0 资产盘点的对外入口。刻意做成「只读 + 可选落盘」：
  * 扫描一个项目不应该产生任何副作用，落盘必须显式要求，且只能落在
@@ -16,9 +16,10 @@ const MAX_INLINE_CHARS = 6000
 
 export function registerInventoryTool(ctx) {
   ctx.tools.register(defineTool({
-    name: 'kit_inventory',
+    name: 'oracle_gate_inventory',
     description:
-      '扫描一个项目根目录，产出「已有资产」的证据清单：可复用组件/函数/类的定义点、既有样式约定（CSS 变量/design token）、以及与关注点相关的既有文件。**默认按目录汇总**（结构视图，每个目录一行，带条数与类型直方图）；需要逐条 `路径:行号` 硬证据时传 `expand: "all"`。用于在动手前确认项目里已经存在什么，避免重复实现或风格割裂。只读，除非显式 save=true。',
+      '动手前想知道项目里已经有什么（避免重复造轮子、风格割裂、改错文件）时用它。'
+      + '扫描一个项目根目录，产出「已有资产」的证据清单：可复用组件/函数/类的定义点、既有样式约定（CSS 变量/design token）、以及与关注点相关的既有文件。**默认按目录汇总**（结构视图，每个目录一行，带条数与类型直方图）；需要逐条 `路径:行号` 硬证据时传 `expand: "all"`。用于在动手前确认项目里已经存在什么，避免重复实现或风格割裂。只读，除非显式 save=true。',
     parameters: {
       root: {
         type: 'string',
@@ -67,7 +68,7 @@ export function registerInventoryTool(ctx) {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: value.ok ? value.markdown : `kit_inventory 失败：${value.error}`,
+        text: value.ok ? value.markdown : `oracle_gate_inventory 失败：${value.error}`,
       }],
     },
     async execute(args) {

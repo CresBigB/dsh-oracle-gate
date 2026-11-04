@@ -1,10 +1,10 @@
 /**
- * `kit_run` 工具注册。
+ * `oracle_gate_run` 工具注册。
  *
- * 与 `kit_design` 的分工：
- *   - kit_design 只「编译」：把 P0 清单和协议脚本交给调用方，适合需要审阅、
+ * 与 `oracle_gate_design` 的分工：
+ *   - oracle_gate_design 只「编译」：把 P0 清单和协议脚本交给调用方，适合需要审阅、
  *     存档或移植到别处的场景；
- *   - kit_run 直接「执行」：在插件内部调用 workflow 引擎跑完，只把结果返回。
+ *   - oracle_gate_run 直接「执行」：在插件内部调用 workflow 引擎跑完，只把结果返回。
  *
  * 为什么值得直接在插件里跑：协议脚本有 26 KB，如果每次都经模型上下文搬运
  * （工具返回 → 模型原样写进 workflow 的 script 参数），一趟就白烧一两万 token，
@@ -26,7 +26,7 @@ import {
 } from '../protocols/design.js'
 import { normalizeSpec, resolveDomainAndPerspectives } from './design.js'
 
-/** 脚本正文上限，与 kit_design 保持一致。 */
+/** 脚本正文上限，与 oracle_gate_design 保持一致。 */
 const MAX_SCRIPT_CHARS = 80000
 /** 结果里允许回传给模型的字符数：超出的部分提示落盘查看。 */
 const MAX_INLINE_RESULT = 24000
@@ -75,13 +75,14 @@ function resolveWorkflowEngine(ctx) {
 
 export function registerRunTool(ctx) {
   ctx.tools.register(defineTool({
-    name: 'kit_run',
+    name: 'oracle_gate_run',
     title: '执行 P1–P4 协议',
     description:
-      '直接执行设计决策协议，不用手工搬运脚本。'
+      '需求还模糊、方案还只有一个的时候先走这里，不用手工搬运脚本。'
       + 'stage="clarify"（默认）：跑 P0 盘点 + P1 术语落地，返回 questions[]（最多 3 道带选项和推荐值的决策题）与 draft_spec。'
       + '拿到后先问用户，再用 stage="design" 带上 spec 出方案。'
-      + 'stage="design" 需要 spec；stage="all" 是旧的一次跑完模式，需求必须有歧义才会被挡下。',
+      + 'stage="design" 需要 spec；stage="all" 是旧的一次跑完模式，需求必须有歧义才会被挡下。'
+      + '需求已经清楚、只是要把验收标准定死时，别用它，直接 oracle_gate_freeze。',
     parameters: {
       root: {
         type: 'string',
@@ -108,7 +109,7 @@ export function registerRunTool(ctx) {
       },
       domain: {
         type: 'string',
-        description: '领域包名（如 backend、numeric），用 kit_domain list 查看可用项。给了就注入该领域的发散视角与验收维度模板。',
+        description: '领域包名（如 backend、numeric），用 oracle_gate_domain list 查看可用项。给了就注入该领域的发散视角与验收维度模板。',
       },
       spec: {
         type: 'json',
@@ -136,7 +137,7 @@ export function registerRunTool(ctx) {
         },
       },
       render: (_args, value) => {
-        if (!value.ok) return [{ type: 'text', text: `kit_run 失败：${value.error}` }]
+        if (!value.ok) return [{ type: 'text', text: `oracle_gate_run 失败：${value.error}` }]
         const rendered = JSON.stringify(value.result, null, 2) ?? 'null'
         const text = rendered.length > MAX_INLINE_RESULT
           ? `${rendered.slice(0, MAX_INLINE_RESULT)}\n… [结果过长，已截断，共 ${rendered.length} 字符]`
@@ -150,7 +151,7 @@ export function registerRunTool(ctx) {
     async execute(args, exec) {
       const parent = exec?.agent
       if (parent === undefined) {
-        return { ok: false, summary: '', stage: '', error: 'kit_run 需要一个发起调用的 agent（exec.agent 为空）' }
+        return { ok: false, summary: '', stage: '', error: 'oracle_gate_run 需要一个发起调用的 agent（exec.agent 为空）' }
       }
 
       const invalid = (error, summary, stage = '') => ({ ok: false, summary, stage, error })
@@ -194,13 +195,13 @@ export function registerRunTool(ctx) {
         spec = normalizeSpec(provided)
       }
 
-      // 领域包与视角的解析和 kit_design 走同一条路径，避免两个入口给出不同的 prompt。
+      // 领域包与视角的解析和 oracle_gate_design 走同一条路径，避免两个入口给出不同的 prompt。
       const resolved = await resolveDomainAndPerspectives({
         domain: args.domain,
         perspectives: args.perspectives,
       })
       if (!resolved.ok) {
-        return invalid(`domain unavailable: ${resolved.error}`, `领域包 ${args.domain} 不可用，先用 kit_domain list 确认名字`, stage)
+        return invalid(`domain unavailable: ${resolved.error}`, `领域包 ${args.domain} 不可用，先用 oracle_gate_domain list 确认名字`, stage)
       }
       const perspectives = resolved.perspectives
       const domainText = resolved.domainText
@@ -241,7 +242,7 @@ export function registerRunTool(ctx) {
             next_step:
               '调用 workflow 工具执行下面的 script，args 原样传入，meta 用 {"name":"design-'
               + stage
-              + '"}。手动模式与 kit_run 自动模式跑的是同一份脚本。',
+              + '"}。手动模式与 oracle_gate_run 自动模式跑的是同一份脚本。',
             script,
             args: scriptArgs,
           },
@@ -287,7 +288,7 @@ export function registerRunTool(ctx) {
         try {
           await run.dispose()
         } catch (error) {
-          ctx.logger?.warn?.(`kit_run: dispose 失败：${error instanceof Error ? error.message : String(error)}`)
+          ctx.logger?.warn?.(`oracle_gate_run: dispose 失败：${error instanceof Error ? error.message : String(error)}`)
         }
       }
 
@@ -304,7 +305,7 @@ export function registerRunTool(ctx) {
           outDir = dir
         } catch (error) {
           outDir = undefined
-          ctx.logger?.warn?.(`kit_run: 存档失败：${error instanceof Error ? error.message : String(error)}`)
+          ctx.logger?.warn?.(`oracle_gate_run: 存档失败：${error instanceof Error ? error.message : String(error)}`)
         }
       }
 

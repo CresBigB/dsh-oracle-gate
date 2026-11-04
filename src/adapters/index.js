@@ -5,7 +5,7 @@
  * `src/adapters/<name>/domain.json`，由这里加载并校验。
  *
  * 领域包只影响 design 阶段（P1 的验收维度清单、P2 的发散视角、P3 的评审角色），
- * 不参与 kit_freeze / kit_exec / kit_gate —— 那三个必须保持领域无关，
+ * 不参与 oracle_gate_freeze / oracle_gate_exec / oracle_gate_gate —— 那三个必须保持领域无关，
  * 否则「换个领域就要改内核」的耦合会立刻回来。
  */
 import { readdir, readFile } from 'node:fs/promises'
@@ -153,7 +153,7 @@ export async function loadDomain(name) {
  * 把领域包里的判据模板渲染成 prompt 用的一段文字。
  *
  * 只给「该验什么 + 命令长什么样」，不给确切命令 —— 确切命令必须由 P1
- * 结合 kit_inventory 的盘点结果写出来，否则模板会变成硬编码。
+ * 结合 oracle_gate_inventory 的盘点结果写出来，否则模板会变成硬编码。
  */
 export function renderOracleTemplate(domain) {
   const lines = []

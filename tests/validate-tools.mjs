@@ -1,4 +1,4 @@
-// 本地校验：把所有 kit_* 工具注册一遍，确认 defineTool 阶段的 schema 校验不抛异常。
+// 本地校验：把所有 oracle_gate_* 工具注册一遍，确认 defineTool 阶段的 schema 校验不抛异常。
 // 依赖 node_modules/@deepseek-ai 的 junction 指向宿主包目录（仅开发期使用，勿提交）。
 // 用法：node tests/validate-tools.mjs
 
@@ -59,8 +59,8 @@ function fakeValue(schema, only) {
 
 for (const tool of captured) {
   // 漏掉 defineTool 包装时，parameters 还是原始的属性映射（顶层没有 type: "object"），
-  // 会被原样发给模型 API，导致整轮请求失败。2026-11-01 的 kit_numeric 就是这么炸的：
-  // Invalid schema for function 'kit_numeric': schema must be a JSON Schema of 'type: "object"'
+  // 会被原样发给模型 API，导致整轮请求失败。2026-11-01 的 oracle_gate_numeric 就是这么炸的：
+  // Invalid schema for function 'oracle_gate_numeric': schema must be a JSON Schema of 'type: "object"'
   if (tool.parameters !== undefined && tool.parameters.type !== 'object') {
     console.error(
       `工具 ${tool.name} 的 parameters 顶层不是 type:"object" —— 是不是漏了 defineTool(...) 包装？`,

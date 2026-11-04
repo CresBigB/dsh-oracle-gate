@@ -10,7 +10,7 @@
     {
       "id": "min-change",
       "title": "最小改动",
-      "instruction": "先查 kit_inventory 里有没有现成的求解器封装、离散格式、物性表、单位换算函数可以复用。改参数、改边界条件、换一个既有求解器开关能解决的，不要动算法主体。若确实要新写求解器，说明既有结构为什么放不下。"
+      "instruction": "先查 oracle_gate_inventory 里有没有现成的求解器封装、离散格式、物性表、单位换算函数可以复用。改参数、改边界条件、换一个既有求解器开关能解决的，不要动算法主体。若确实要新写求解器，说明既有结构为什么放不下。"
     },
     {
       "id": "numerical-stability",
@@ -47,9 +47,9 @@
     { "level": "L0", "criterion": "编译或构建通过", "hint": "cmake --build / qmake && nmake / make；warning 不算失败，但要记下来" },
     { "level": "L0", "criterion": "单元测试通过", "hint": "pytest -q / ctest / 自带的数值断言测试" },
     { "level": "L0", "criterion": "既有算例的静态输出逐字节不退化", "hint": "跑一组老输入，与冻结的输出文件做 sha256 比对；字节级一致才算没动到别处" },
-    { "level": "L1", "criterion": "最大相对误差不超过 10%", "hint": "用 kit_numeric 对参考解与候选结果做比较，分母取参考值（温标用摄氏度，不用开尔文）" },
+    { "level": "L1", "criterion": "最大相对误差不超过 10%", "hint": "用 oracle_gate_numeric 对参考解与候选结果做比较，分母取参考值（温标用摄氏度，不用开尔文）" },
     { "level": "L1", "criterion": "最大相对误差落在目标值 5% 以内", "hint": "同一份比较结果里的 within_target 字段；超过目标但未超上限算可接受，不算达标" },
-    { "level": "L1", "criterion": "参考点覆盖率 100%（不允许缺坐标）", "hint": "kit_numeric 的 coverage 字段必须是 1；有未覆盖点会直接报错而不是跳过" },
+    { "level": "L1", "criterion": "参考点覆盖率 100%（不允许缺坐标）", "hint": "oracle_gate_numeric 的 coverage 字段必须是 1；有未覆盖点会直接报错而不是跳过" },
     { "level": "L1", "criterion": "壁钟时间不超过基线的 1.25 倍", "hint": "同机器、同输入、同构建类型下比较；debug 与 release 不能混比" },
     { "level": "L2", "criterion": "与既有物理模型、单位处理、离散格式保持一致", "hint": "人工判断，评审必须引用 路径:行号 作为范本依据" }
   ],

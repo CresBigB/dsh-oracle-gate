@@ -22,7 +22,7 @@ export function receiptsDir(runDir) {
  * 坏回执跳过而不是抛：一个文件坏掉不该让整次裁决/进度查询不可用，
  * 但调用方需要知道「跳过了几个」时才不会把残缺当完整 —— 所以返回值带总数。
  *
- * 原来这个函数是 src/tools/gate.js 的私有实现；kit_status 也要读回执，
+ * 原来这个函数是 src/tools/gate.js 的私有实现；oracle_gate_status 也要读回执，
  * 与其复制一份「坏文件跳过」的语义，不如上提到内核，让两个工具共用一套口径。
  */
 export async function readReceipts(runDir) {

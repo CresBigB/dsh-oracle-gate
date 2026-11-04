@@ -61,7 +61,7 @@ const ACCEPTANCE_ITEMS = {
       check: {
         type: 'string',
         description:
-          'L0/L1 必须以一条可直接执行的命令开头（例如 `node tests/x.mjs`、`pnpm typecheck`；多条用 && 连接，会被自动拆条），命令后面可以跟中文说明写判定标准。只写「怎么算」而不给命令（如「在脚本里聚合并断言 |D| ≥ 0.9」）会被 kit_freeze 判 blocking 拒绝冻结。L2/L3 写「人工判断」',
+          'L0/L1 必须以一条可直接执行的命令开头（例如 `node tests/x.mjs`、`pnpm typecheck`；多条用 && 连接，会被自动拆条），命令后面可以跟中文说明写判定标准。只写「怎么算」而不给命令（如「在脚本里聚合并断言 |D| ≥ 0.9」）会被 oracle_gate_freeze 判 blocking 拒绝冻结。L2/L3 写「人工判断」',
       },
     },
   },
@@ -374,7 +374,7 @@ const clarify = await agent(
     '## 第三步：draft_spec',
     'goal 一句话；acceptance 每条标 L0–L3（能机器判定的往 L0/L1 放）；',
     '**L0/L1 的 check 必须由可执行命令开头**：`node tests/x.mjs`、`pnpm typecheck`、`npx vitest run tests/a.test.ts` 这类，',
-    '多条用 && 连接（kit_freeze 会自动拆成 a/b 两条），命令后面再跟中文说明判定标准。',
+    '多条用 && 连接（oracle_gate_freeze 会自动拆成 a/b 两条），命令后面再跟中文说明判定标准。',
     '反面例子（会被拒绝冻结）：「在脚本里对 r.assets 按父目录聚合，断言命中数 / |D| ≥ 0.9」——这是算法描述，没人知道该跑什么。',
     '正面例子：「`node tests/inventory-render.test.mjs` 退出码 0，脚本内部断言目录汇总行覆盖率 ≥ 90%」。',
     'constraints 只写需求里确实存在的边界，没说的写「未指定」；',

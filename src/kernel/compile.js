@@ -1,8 +1,8 @@
 /**
  * 把 design 阶段产出的分层验收条件编译成可冻结的 oracles。
  *
- * 缺口背景：`kit_design` 给的是 `{criterion, level, check}`，`check` 是给人看的自然语言；
- * `kit_freeze` 要的是 `{id, level, criterion, command}`，`command` 必须能直接 spawn。
+ * 缺口背景：`oracle_gate_design` 给的是 `{criterion, level, check}`，`check` 是给人看的自然语言；
+ * `oracle_gate_freeze` 要的是 `{id, level, criterion, command}`，`command` 必须能直接 spawn。
  * 中间没有任何转换，一轮闭环就得手工搬五条判据，搬运时还会碰上「check 里写了 &&」
  * 「check 要求先新建一个还不存在的测试文件」这类问题。
  *
@@ -167,7 +167,7 @@ export function pickCommand(text) {
  * 编译一批分层验收条件。
  *
  * 返回 `{ oracles, issues }`：
- * - `oracles` 可直接交给 `kit_freeze` 的 `oracles` 参数（也可再人工改）
+ * - `oracles` 可直接交给 `oracle_gate_freeze` 的 `oracles` 参数（也可再人工改）
  * - `issues` 里 `severity: 'blocking'` 的项意味着这条判据没能编译成功，
  *   必须先补命令或改写，不能让它悄悄消失
  */
@@ -245,7 +245,7 @@ export function compileAcceptance(acceptance) {
         criterion,
         reason: 'shell-meta',
         severity: 'blocking',
-        detail: `check 里含 shell 元字符 ${unsupported.join(' ')}。kit_exec 不经过 shell，这些命令跑不出预期结果；请拆成多条判据，或把管道/重定向改写成程序内部的检查。`,
+        detail: `check 里含 shell 元字符 ${unsupported.join(' ')}。oracle_gate_exec 不经过 shell，这些命令跑不出预期结果；请拆成多条判据，或把管道/重定向改写成程序内部的检查。`,
       })
       return
     }

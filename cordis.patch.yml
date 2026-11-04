@@ -1,5 +1,5 @@
 # dsh-oracle-gate bundle patch: mounts the oracle-gate plugin into the host
-# composition of a dsh profile. The plugin registers its `kit_*` tools into the
+# composition of a dsh profile. The plugin registers its `oracle_gate_*` tools into the
 # shared `tools` registry so any session of the profile can drive the
 # deterministic acceptance-gate tools.
 #

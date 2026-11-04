@@ -1,5 +1,5 @@
 /**
- * `kit_design` 工具注册。
+ * `oracle_gate_design` 工具注册。
  *
  * 它做两件事：先把 P0 资产盘点跑掉，再把 P1–P4 协议编译成可直接执行的
  * workflow 脚本文本连同 args 一起交出去。
@@ -83,7 +83,7 @@ export function normalizeSpec(raw) {
   }
 }
 
-// 领域包与视角的解析规则只此一处：kit_design 与 kit_run 都必须走同一条路径，
+// 领域包与视角的解析规则只此一处：oracle_gate_design 与 oracle_gate_run 都必须走同一条路径，
 // 否则「从哪个入口进去」会悄悄改变 agent 看到的东西。
 export async function resolveDomainAndPerspectives(input = {}) {
   const domainName = typeof input.domain === 'string' ? input.domain.trim() : ''
@@ -113,7 +113,7 @@ export async function resolveDomainAndPerspectives(input = {}) {
 
 export function registerDesignTool(ctx) {
   ctx.tools.register(defineTool({
-    name: 'kit_design',
+    name: 'oracle_gate_design',
     title: '设计决策协议 P1–P4',
     description:
       '当用户提出模糊需求、没给技术栈和实现细节时使用：先盘点项目里已有的可复用资产（P0），再把「需求澄清 → 多视角发散 → 对抗评审 → 收敛裁决」编译成一段确定性的 workflow 脚本。返回脚本与 args，交给 workflow 工具执行。用于避免重复造轮子、风格割裂、以及只想到一种常见做法就动手。',
@@ -135,8 +135,8 @@ export function registerDesignTool(ctx) {
       domain: {
         type: 'string',
         description:
-          '领域包名（如 backend），用 kit_domain list 查看可用项。给了领域包，就用它的发散视角与验收维度模板；'
-          + '显式传的 perspectives 优先于领域包。领域包不影响 kit_freeze / kit_exec / kit_gate。',
+          '领域包名（如 backend），用 oracle_gate_domain list 查看可用项。给了领域包，就用它的发散视角与验收维度模板；'
+          + '显式传的 perspectives 优先于领域包。领域包不影响 oracle_gate_freeze / oracle_gate_exec / oracle_gate_gate。',
       },
       perspectives: {
         type: 'array',
@@ -188,7 +188,7 @@ export function registerDesignTool(ctx) {
         },
       },
       render: (_args, value) => {
-        if (!value.ok) return [{ type: 'text', text: `kit_design 失败：${value.error}` }]
+        if (!value.ok) return [{ type: 'text', text: `oracle_gate_design 失败：${value.error}` }]
         const blocks = [
           `## ${value.summary}`,
           '',
@@ -244,7 +244,7 @@ export function registerDesignTool(ctx) {
         perspectives: args.perspectives,
       })
       if (!resolved.ok) {
-        return invalid(`domain unavailable: ${resolved.error}`, `领域包 ${args.domain} 不可用，先用 kit_domain list 确认名字`)
+        return invalid(`domain unavailable: ${resolved.error}`, `领域包 ${args.domain} 不可用，先用 oracle_gate_domain list 确认名字`)
       }
       const domainText = resolved.domainText
       const perspectives = resolved.perspectives
@@ -315,7 +315,7 @@ export function registerDesignTool(ctx) {
           outDir = dir
         } catch (error) {
           outDir = undefined
-          ctx.logger?.warn?.(`kit_design: 存档失败：${error instanceof Error ? error.message : String(error)}`)
+          ctx.logger?.warn?.(`oracle_gate_design: 存档失败：${error instanceof Error ? error.message : String(error)}`)
         }
       }
 
@@ -337,7 +337,7 @@ export function registerDesignTool(ctx) {
           '调用 workflow 工具执行：script 传上面的脚本，meta 建议 {"name":"design-clarify","description":"P1 术语落地"}，args 传上面的 args。'
           + '执行完会拿到 questions[]（最多 3 道决策题，每题带选项/影响/推荐值）与 draft_spec。'
           + '用 ask_user_question 一次问完；用户不答就直接采用 recommended 当默认假设。'
-          + '然后把 draft_spec 与用户选择（或默认值）整理成 spec，把 stage 改成 "design" 再调一次 kit_design，args 里的 spec 一并替换。',
+          + '然后把 draft_spec 与用户选择（或默认值）整理成 spec，把 stage 改成 "design" 再调一次 oracle_gate_design，args 里的 spec 一并替换。',
         design:
           '调用 workflow 工具执行：script 传上面的脚本，meta 建议 {"name":"design-build","description":"P2 P4 出方案与裁决"}，args 传上面的 args。'
           + 'P2 会按 spec.readings 分别出方案，P3 并行评审，P4 给三态裁决（admitted / blocked-on-human / rejected）。'

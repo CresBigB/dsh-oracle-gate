@@ -108,7 +108,7 @@ function foldAssetsByDirectory(assets, maxTotal) {
  * workflow 脚本运行在沙箱里、没有文件系统访问，所以清单只能经由 args 传入。
  * 这里必须控制长度：传太少 agent 无从复用，传太多会撑爆参数并且淹没重点。
  *
- * @param {object} result kit_inventory 的 inventory() 结果
+ * @param {object} result oracle_gate_inventory 的 inventory() 结果
  * @param {{maxAssets?: number, maxConventions?: number, maxSimilar?: number}} limits
  * @returns {string}
  */

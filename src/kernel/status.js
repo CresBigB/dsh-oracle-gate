@@ -5,7 +5,7 @@
 // tests/status-readonly.test.mjs 用「调用前后字节不变」来钉住。
 //
 // 四类计数不重新实现：直接取 evaluateGate 的返回值。判断一次、两处共用，
-// 这样 kit_status 与 kit_gate 不可能在「哪些判据过了」上给出两个答案。
+// 这样 oracle_gate_status 与 oracle_gate_gate 不可能在「哪些判据过了」上给出两个答案。
 import { normalizeBudget, remainingOf, usageOf } from './ledger.js'
 import { countsOf, evaluateGate, latestReceipts, NEXT_BY_VERDICT, summarizeGate } from './gate.js'
 
@@ -161,7 +161,7 @@ export function renderRunStatus(status, { limit = 20 } = {}) {
     for (const item of shown) {
       let detail = ''
       if (item.state === '失败') {
-        // 「失败」有三种成因，渲染成同一行的话，人就得多跑一次 kit_gate 才能分辨。
+        // 「失败」有三种成因，渲染成同一行的话，人就得多跑一次 oracle_gate_gate 才能分辨。
         if (item.reason === 'timed-out') detail = '（超时）'
         else if (item.reason === 'spawn-failed') detail = '（起不来）'
         else if (typeof item.exit_code === 'number') detail = `（退出码 ${item.exit_code}）`

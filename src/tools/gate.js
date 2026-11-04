@@ -1,5 +1,5 @@
 /**
- * `kit_gate`：算准入。
+ * `oracle_gate_gate`：算准入。
  *
  * 输入只有三样：冻结的判据、真实的回执、结构化的评审结论。没有任何地方读 agent
  * 自己的「我觉得做完了」——这是这套内核相对「让模型自己判断」的唯一区别。
@@ -37,10 +37,13 @@ const OUT_SCHEMA = {
 export function registerGateTool(ctx) {
   ctx.tools.register(
     defineTool({
-      name: 'kit_gate',
-      title: '计算准入裁决（kit_gate）',
+      name: 'oracle_gate_gate',
+      title: '计算准入裁决（oracle_gate_gate）',
       description:
-        '由「已冻结判据 + 真实执行回执 + 结构化评审」计算准入结论：pass / rejected / insufficient-evidence / blocked-on-human。人工判据（L2/L3）的结论通过 reviews 传入，任一 veto、unknowns 或缺少 evidence_refs 都不准入。不读任何 agent 的自我评价。',
+        '判据都跑完之后算准入结论：pass / rejected / insufficient-evidence / blocked-on-human。'
+        + '由「已冻结判据 + 真实执行回执 + 结构化评审」算出来，硬门失败时人工传 pass 也无效。'
+        + '人工判据（L2/L3）的结论必须通过 reviews 传进来，任一 veto、unknowns 非空或缺少 evidence_refs 都不准入。'
+        + '不要用我来给自己打分：pass 只代表「冻结的判据都过了」，不代表活儿干得对。不读任何 agent 的自我评价。',
       parameters: {
         root: { type: 'string', required: true, description: '项目根目录绝对路径（与冻结时相同）。' },
         run_id: { type: 'string', required: true, description: '冻结时使用的 run_id。' },
@@ -69,7 +72,7 @@ export function registerGateTool(ctx) {
             '',
             value.next_step,
           ].filter((line) => line !== '').join('\n')
-          : `kit_gate 失败：${value.summary || value.error}`,
+          : `oracle_gate_gate 失败：${value.summary || value.error}`,
         }],
       },
       async execute(args) {
@@ -110,7 +113,7 @@ export function registerGateTool(ctx) {
         if (!loaded.ok) {
           return bad(
             loaded.error === 'not-frozen'
-              ? `run_id「${runId}」还没有冻结判据，先调用 kit_freeze。`
+              ? `run_id「${runId}」还没有冻结判据，先调用 oracle_gate_freeze。`
               : loaded.error === 'hash-mismatch'
                 ? 'oracles.json 在冻结后被修改过，本次运行作废。'
                 : `判据不可用：${loaded.error}`,

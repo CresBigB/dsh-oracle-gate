@@ -1,6 +1,6 @@
 // 判据冻结：写入 <runDir>/oracles.json，之后任何改动都会被 hash 校验拒绝。
 //
-// 铁律（AGENTS.md）：kit_exec 只能按冻结判据 id 执行命令，禁止接受任意命令。
+// 铁律（AGENTS.md）：oracle_gate_exec 只能按冻结判据 id 执行命令，禁止接受任意命令。
 // 所以命令的唯一入口是 freeze，而 freeze 只能成功一次。
 import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'

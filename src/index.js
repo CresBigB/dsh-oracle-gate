@@ -1,11 +1,19 @@
 /**
  * dsh-oracle-gate — 期 1 通路已验证，期 2 起逐步接入真实协议。
  *
- * 已注册：
- *   - kit_ping       通路自检
- *   - kit_inventory  P0 资产盘点（只读或显式落盘）
- *   - kit_design     P1–P4 协议编译器（返回脚本 + args，交给调用方执行）
- *   - kit_run        直接执行 P1–P4 协议（脚本不出插件，省掉上下文搬运）
+ * 已注册（12 个，统一前缀 oracle_gate_）：
+ *   - oracle_gate            验收台账总入口（模型在「要不要验收」上犹豫时先调它）
+ *   - oracle_gate_ping       插件自检
+ *   - oracle_gate_inventory  P0 资产盘点（只读或显式落盘）
+ *   - oracle_gate_design     P1–P4 协议编译器（返回脚本 + args，交给调用方执行）
+ *   - oracle_gate_run        直接执行 P1–P4 协议（脚本不出插件，省掉上下文搬运）
+ *   - oracle_gate_freeze     冻结验收判据
+ *   - oracle_gate_exec       按判据 id 执行并写回执
+ *   - oracle_gate_gate       四态准入裁决
+ *   - oracle_gate_failures   失败归因记录 / 检索
+ *   - oracle_gate_domain     领域包 list / show
+ *   - oracle_gate_numeric    数值曲线对比
+ *   - oracle_gate_status     单 run 进度聚合
  *
  * 后续期次在 src/protocols/ 下逐步落地 v4 执行协议与领域包。
  *
@@ -24,6 +32,7 @@ import { registerFailuresTool } from './tools/failures.js'
 import { registerDomainTool } from './tools/domain.js'
 import { registerNumericTool } from './tools/numeric.js'
 import { registerStatusTool } from './tools/status.js'
+import { registerEntryTool } from './tools/entry.js'
 
 export const name = 'oracle-gate'
 
@@ -32,12 +41,12 @@ export const name = 'oracle-gate'
  *
  * inject 只声明 tools。
  *
- * 期 3.6 的 kit_run 需要 workflowEngine，但**不能**把它写进 inject：宿主里
+ * 期 3.6 的 oracle_gate_run 需要 workflowEngine，但**不能**把它写进 inject：宿主里
  * workflowEngine 由 @deepseek-ai/dsh-workflow-ptc 提供，profile bundle 的加载
  * 作用域等不到这个服务，声明后会直接 `pending (waiting for service:
- * workflowEngine)`，把整个插件——包括本来好好的 kit_ping / kit_inventory /
- * kit_design——一起拖死（2026-11-01 实测）。
- * 改为在 kit_run 里用 ctx.get('workflowEngine') 惰性获取，拿不到就返回明确
+ * workflowEngine)`，把整个插件——包括本来好好的 oracle_gate_ping / oracle_gate_inventory /
+ * oracle_gate_design——一起拖死（2026-11-01 实测）。
+ * 改为在 oracle_gate_run 里用 ctx.get('workflowEngine') 惰性获取，拿不到就返回明确
  * 错误，保证其余工具始终可用。
  */
 export const inject = ['tools']
@@ -53,7 +62,7 @@ export function apply(ctx, config) {
 
   /**
    * 诊断用：列出当前 ctx 能看到哪些服务、以及 root store 里到底注册了什么。
-   * 只在 kit_ping 里调用，没有副作用。
+   * 只在 oracle_gate_ping 里调用，没有副作用。
    */
   const probeServices = () => {
     const interesting = [
@@ -111,9 +120,12 @@ export function apply(ctx, config) {
     }
   }
 
-  safe('kit_ping', () => ctx.tools.register(defineTool({
-    name: 'kit_ping',
-    description: 'Protocol-kit 通路自检。返回插件版本、挂载配置与最小运行期事实，用于验证插件是否被宿主正确加载。没有副作用，不读写任何文件。',
+  // 总入口：11 个细分工具之上留一个落点，模型在「这活儿要不要验收」上犹豫时先调它。
+  safe('oracle_gate', registerEntryTool)
+
+  safe('oracle_gate_ping', () => ctx.tools.register(defineTool({
+    name: 'oracle_gate_ping',
+    description: '插件自检。只在「这个插件到底装上没有」「某个报错是不是插件引起的」时调用：返回插件版本、挂载配置与运行期事实（含各服务是否可见）。没有副作用，不读写任何文件。',
     parameters: {
       echo: {
         type: 'string',
@@ -137,7 +149,7 @@ export function apply(ctx, config) {
       render: (_args, value) => [{
         type: 'text',
         text: [
-          `kit_ping ok=${value.ok}`,
+          `oracle_gate_ping ok=${value.ok}`,
           `plugin=${value.plugin}@${value.version}`,
           `state_dir=${value.state_dir}`,
           `node=${value.node_version}`,
@@ -165,26 +177,26 @@ export function apply(ctx, config) {
   })))
 
   // 期 2：P0 资产盘点
-  safe('kit_inventory', registerInventoryTool)
+  safe('oracle_gate_inventory', registerInventoryTool)
 
   // 期 3：P1–P4 设计决策协议（盘点 + 编译成 workflow 脚本）
-  safe('kit_design', registerDesignTool)
+  safe('oracle_gate_design', registerDesignTool)
 
   // 期 3.6：直接执行，脚本不必经上下文搬运
-  safe('kit_run', registerRunTool)
+  safe('oracle_gate_run', registerRunTool)
 
   // 期 4a：执行内核（冻结判据 → 按 id 执行 → 准入裁决 → 失败归因）
-  safe('kit_freeze', registerFreezeTool)
-  safe('kit_exec', registerExecTool)
-  safe('kit_gate', registerGateTool)
-  safe('kit_failures', registerFailuresTool)
+  safe('oracle_gate_freeze', registerFreezeTool)
+  safe('oracle_gate_exec', registerExecTool)
+  safe('oracle_gate_gate', registerGateTool)
+  safe('oracle_gate_failures', registerFailuresTool)
 
   // 期 4b：领域包（给 design 阶段的验收维度 / 发散视角 / 评审角色）
-  safe('kit_domain', registerDomainTool)
+  safe('oracle_gate_domain', registerDomainTool)
 
   // 期 4c：数值内核（比两条曲线，给出可复算的误差指标）
-  safe('kit_numeric', registerNumericTool)
-  safe('kit_status', registerStatusTool)
+  safe('oracle_gate_numeric', registerNumericTool)
+  safe('oracle_gate_status', registerStatusTool)
 
   if (skipped.length > 0) {
     try {

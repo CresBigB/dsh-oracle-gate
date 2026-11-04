@@ -1,7 +1,7 @@
 /**
- * `kit_freeze`：把验收判据一次性冻结。
+ * `oracle_gate_freeze`：把验收判据一次性冻结。
  *
- * 这是整套执行内核的锚点。冻结之后判据不可修改，`kit_exec` 只能按 id 跑它们 ——
+ * 这是整套执行内核的锚点。冻结之后判据不可修改，`oracle_gate_exec` 只能按 id 跑它们 ——
  * 于是「跑什么」这个决定在开始执行前就定死了，执行过程中的任何人（包括 agent 自己）
  * 都没法把门槛调低来让结果通过。
  */
@@ -34,10 +34,14 @@ const OUT_SCHEMA = {
 export function registerFreezeTool(ctx) {
   ctx.tools.register(
     defineTool({
-      name: 'kit_freeze',
-      title: '冻结验收判据（kit_freeze）',
+      name: 'oracle_gate_freeze',
+      title: '冻结验收判据（oracle_gate_freeze）',
       description:
-        '执行内核第一步：把分层验收判据（L0 编译/类型检查/单测、L1 量化指标、L2 结构化评审、L3 人类品味）冻结成 oracles.json 并记录哈希，之后不可修改。冻结后所有执行只能通过 kit_exec 按判据 id 进行，命令不接受临时指定。用于保证「跑什么」在执行前就定死，跑的人没法中途调低门槛。',
+        '动手前先冻结验收判据。'
+        + '当用户要求「实现 / 修复 / 重构 / 优化」一个有客观验收标准的东西（测试通过、性能数字、构建产物、对比基准、可复算的结果）时，先调我把分层判据（L0 编译/类型检查/单测、L1 量化指标、L2 结构化评审、L3 人类品味）固化成 oracles.json 并记哈希；'
+        + '之后只有 oracle_gate_exec 能按这些 id 跑，谁都没法在跑到一半时调低门槛。'
+        + '不要用于：纯问答、单行 typo、探索性调研、只是读代码看看。'
+        + '代价：一个 run_id 只能冻一次，要改判据就得换 run_id 重来；命令里禁止 && / 管道 / 重定向 / 通配符，要跑多个进程就拆成多条判据。先用 dry_run 看一遍再正式冻结。',
       parameters: {
         root: {
           type: 'string',
@@ -58,7 +62,7 @@ export function registerFreezeTool(ctx) {
         acceptance: {
           type: 'json',
           description:
-            '直接喂 kit_design 产出的 spec.acceptance（[{criterion, level, check}]），由工具编译成 oracles：L0/L1 从 check 里提命令并自动拆 &&/; 链，L2/L3 转人工判据。L0/L1 提不出命令时不会自动降级成人工判据（那等于拆掉硬门），而是报 issue 让你补。建议先 dry_run 看一眼再冻结。',
+            '直接喂 oracle_gate_design 产出的 spec.acceptance（[{criterion, level, check}]），由工具编译成 oracles：L0/L1 从 check 里提命令并自动拆 &&/; 链，L2/L3 转人工判据。L0/L1 提不出命令时不会自动降级成人工判据（那等于拆掉硬门），而是报 issue 让你补。建议先 dry_run 看一眼再冻结。',
         },
         dry_run: {
           type: 'boolean',
@@ -84,7 +88,7 @@ export function registerFreezeTool(ctx) {
               JSON.stringify(value.oracles, null, 2),
               '```',
             ]
-            : [`kit_freeze 失败：${value.summary || value.error}`]
+            : [`oracle_gate_freeze 失败：${value.summary || value.error}`]
 
           const issues = Array.isArray(value.issues) ? value.issues : []
           if (issues.length > 0) {
@@ -150,7 +154,7 @@ export function registerFreezeTool(ctx) {
         const hasAcceptance = Array.isArray(args.acceptance) && args.acceptance.length > 0
         if (!explicit && !hasAcceptance) {
           return invalid(
-            '必须给 oracles 或 acceptance 之一：前者是手写判据，后者直接喂 kit_design 的 spec.acceptance 由工具编译',
+            '必须给 oracles 或 acceptance 之一：前者是手写判据，后者直接喂 oracle_gate_design 的 spec.acceptance 由工具编译',
             'no-oracles',
           )
         }
@@ -189,7 +193,7 @@ export function registerFreezeTool(ctx) {
             dry_run: true,
             next_step:
               '复核上面的命令是否真的能跑：路径存在、退出码符合预期、不含 shell 元字符。'
-              + '确认后把这些 oracles 原样传给 kit_freeze（不带 dry_run）正式冻结，冻结后不可改。',
+              + '确认后把这些 oracles 原样传给 oracle_gate_freeze（不带 dry_run）正式冻结，冻结后不可改。',
             error: '',
           }
         }
@@ -225,9 +229,9 @@ export function registerFreezeTool(ctx) {
           source,
           dry_run: false,
           next_step:
-            `逐条调用 kit_exec（root 同上，run_id="${runId}"，oracle_id 取自上面清单）执行可执行判据；`
-            + `${manual > 0 ? '人工判据（L2/L3）由评审产出结构化结论后，用 kit_gate 的 reviews 传入；' : ''}`
-            + '全部跑完后调用 kit_gate 得到 verdict。注意账本预留即消耗，失败不退款。',
+            `逐条调用 oracle_gate_exec（root 同上，run_id="${runId}"，oracle_id 取自上面清单）执行可执行判据；`
+            + `${manual > 0 ? '人工判据（L2/L3）由评审产出结构化结论后，用 oracle_gate_gate 的 reviews 传入；' : ''}`
+            + '全部跑完后调用 oracle_gate_gate 得到 verdict。注意账本预留即消耗，失败不退款。',
           error: '',
         }
       },

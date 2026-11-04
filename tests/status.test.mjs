@@ -1,4 +1,4 @@
-// kit_status 的语义测试：跑在真实的 run 目录上（.protocol-kit/inventory-dir-001），
+// oracle_gate_status 的语义测试：跑在真实的 run 目录上（.protocol-kit/inventory-dir-001），
 // 覆盖三件事：
 //   1. 人工判据的状态随 reviews 变化 —— 这是唯一有「真变量」的断言，不是恒真式。
 //   2. 七桶预算内部自洽，且用 oracles.json 的 doc.budget 而不是 DEFAULT_BUDGET。

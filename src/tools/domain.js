@@ -1,5 +1,5 @@
 /**
- * `kit_domain`：列出与查看领域包。
+ * `oracle_gate_domain`：列出与查看领域包。
  *
  * 领域包回答的是「这个领域通常该验哪些维度」。它不进内核，只影响 design 阶段：
  * P1 拿它当验收维度清单，P2 拿它的视角做发散，P3 拿它的角色做评审。
@@ -25,10 +25,11 @@ const OUT_SCHEMA = {
 export function registerDomainTool(ctx) {
   ctx.tools.register(
     defineTool({
-      name: 'kit_domain',
-      title: '领域包（kit_domain）',
+      name: 'oracle_gate_domain',
+      title: '领域包（oracle_gate_domain）',
       description:
-        '列出或查看领域包。领域包提供该领域的验收维度模板、发散视角、评审角色与失败归因提示；把它传给 kit_design 的 domain 参数即可注入到 P1–P3。领域包不影响 kit_freeze / kit_exec / kit_gate —— 内核保持领域无关。',
+        '只在冻结之前想不好该验哪些维度时用它（它给的是「这类需求通常该验什么」的模板，不是必须步骤）。'
+        + '列出或查看领域包。领域包提供该领域的验收维度模板、发散视角、评审角色与失败归因提示；把它传给 oracle_gate_design 的 domain 参数即可注入到 P1–P3。领域包不影响 oracle_gate_freeze / oracle_gate_exec / oracle_gate_gate —— 内核保持领域无关。',
       parameters: {
         action: {
           type: 'string',
@@ -53,7 +54,7 @@ export function registerDomainTool(ctx) {
               '',
               value.next_step,
             ].filter((line) => line !== '').join('\n')
-            : `kit_domain 失败：${value.summary || value.error}`,
+            : `oracle_gate_domain 失败：${value.summary || value.error}`,
         }],
       },
       async execute(args) {
@@ -72,7 +73,7 @@ export function registerDomainTool(ctx) {
             domains,
             next_step: usable === 0
               ? '还没有可用的领域包。可以在 src/adapters/<name>/domain.json 里新增一个，格式参考 src/adapters/backend/domain.json。'
-              : '用 show 查看某一个的完整定义，或直接把名字传给 kit_design 的 domain 参数。',
+              : '用 show 查看某一个的完整定义，或直接把名字传给 oracle_gate_design 的 domain 参数。',
           }
         }
 
@@ -99,7 +100,7 @@ export function registerDomainTool(ctx) {
           summary: `${loaded.domain.name}｜${loaded.domain.title}`,
           domain: loaded.domain,
           markdown: compactDomain(loaded.domain),
-          next_step: `把这个领域包传给 kit_design：domain="${loaded.domain.name}"。它不会改变 kit_freeze / kit_exec / kit_gate 的行为。`,
+          next_step: `把这个领域包传给 oracle_gate_design：domain="${loaded.domain.name}"。它不会改变 oracle_gate_freeze / oracle_gate_exec / oracle_gate_gate 的行为。`,
         }
       },
     }),

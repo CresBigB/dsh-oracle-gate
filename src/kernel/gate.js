@@ -11,7 +11,7 @@ export const VERDICTS = ['pass', 'rejected', 'insufficient-evidence', 'blocked-o
 /**
  * 同一判据可能有多份回执（重跑），取最后写入的那份。
  *
- * 从 kit_status 侧上提：它原本自己也建了一份同样的 map（评审 2026-11-01 的 L2-1 notes
+ * 从 oracle_gate_status 侧上提：它原本自己也建了一份同样的 map（评审 2026-11-01 的 L2-1 notes
  * 指出「同语义两份实现」）。「最新」的口径只该有一处，否则两边会慢慢分叉。
  */
 export function latestReceipts(receipts) {
@@ -25,7 +25,7 @@ export function latestReceipts(receipts) {
 /**
  * 计数行的唯一模板。
  *
- * 从 summarizeGate 里抽出来给 kit_status 复用：评审（2026-11-01）指出 status 自己
+ * 从 summarizeGate 里抽出来给 oracle_gate_status 复用：评审（2026-11-01）指出 status 自己
  * 重拼了一遍「通过 X / 失败 Y」，两处模板迟早漂移，同一次查询会给出两种措辞。
  */
 export function countsOf(result) {
@@ -119,7 +119,7 @@ export function evaluateGate({ doc, receipts, reviews = [] }) {
   if (missing.length > 0) notes.push(`还有 ${missing.length} 条判据没跑：${missing.join('、')} —— 没跑不等于过，也不等于失败`)
   // 措辞刻意不说「没人评」：reviews 是不落盘的调用参数，gate 无从知道历史上有没有人评过，
   // 只能说「这次没传进来」。评审（2026-11-01，L3-1-F3）指出原文把「本次没传 reviews」
-  // 断言成了「没人评过」，和 kit_status 里那句「不代表没人评过」自相矛盾。
+  // 断言成了「没人评过」，和 oracle_gate_status 里那句「不代表没人评过」自相矛盾。
   if (awaitingHuman.length > 0) notes.push(`还有 ${awaitingHuman.length} 条人工判据没有评审结论传入：${awaitingHuman.join('、')} —— 未传入不等于没人评过`)
   if (failed.length > 0 && missing.length > 0) notes.push('注意：硬失败优先，所以即使补跑了剩下的判据，本次结论仍是 rejected')
 
@@ -145,12 +145,12 @@ export function summarizeGate(result) {
 /**
  * 「下一步该做什么」的唯一映射。
  *
- * 从 src/tools/gate.js 上提到内核：kit_status 也要报下一步，两个工具各写一份必然漂移
+ * 从 src/tools/gate.js 上提到内核：oracle_gate_status 也要报下一步，两个工具各写一份必然漂移
  * ——同一次查询里给出两个不同的建议，比不给建议更糟。
  */
 export const NEXT_BY_VERDICT = {
   pass: '全部通过，可以交付。',
-  rejected: '有硬失败或 veto：按失败分类回退（kit_failures 记录时会给 retry_target），不要原地重试。',
-  'insufficient-evidence': '还有判据没跑：用 kit_exec 补齐后重新调用 kit_gate。没跑不等于过。',
+  rejected: '有硬失败或 veto：按失败分类回退（oracle_gate_failures 记录时会给 retry_target），不要原地重试。',
+  'insufficient-evidence': '还有判据没跑：用 oracle_gate_exec 补齐后重新调用 oracle_gate_gate。没跑不等于过。',
   'blocked-on-human': '只剩人工判据：把评审结论通过 reviews 传进来，或者直接问用户拍板。',
 }

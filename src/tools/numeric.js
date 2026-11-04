@@ -1,4 +1,4 @@
-// kit_numeric —— 把数值内核暴露成一个可以直接问的工具。
+// oracle_gate_numeric —— 把数值内核暴露成一个可以直接问的工具。
 //
 // 它不是判据执行器：判据仍然是一条命令（脚本内部 import numeric.js）。
 // 这个工具的用途是「先看看差多少」——设计阶段估误差、评审阶段复核别人的数字、
@@ -19,10 +19,10 @@ const OUT_SCHEMA = {
 
 export function registerNumericTool(ctx) {
   ctx.tools.register(defineTool({
-    name: 'kit_numeric',
+    name: 'oracle_gate_numeric',
     description:
       '比较两条数值曲线，给出相对误差、绝对差、覆盖率与最差点。' +
-      '用于估算或复核「算得对不对」，不记账、不参与裁决 —— 需要当判据用的，把断言写进脚本再由 kit_exec 执行。' +
+      '用于估算或复核「算得对不对」，不记账、不参与裁决 —— 需要当判据用的，把断言写进脚本再由 oracle_gate_exec 执行。' +
       '阈值有硬上限：target ≤ 5%、maximum ≤ 10%，调高会被直接拒绝。',
     parameters: {
       spec: {
@@ -60,7 +60,7 @@ export function registerNumericTool(ctx) {
 
 function renderText(value) {
   if (!value || !value.ok) {
-    return `kit_numeric 失败：${value?.summary || value?.error || '未知错误'}`
+    return `oracle_gate_numeric 失败：${value?.summary || value?.error || '未知错误'}`
   }
   const m = value.metrics ?? {}
   const lines = [
