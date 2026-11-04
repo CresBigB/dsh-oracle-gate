@@ -8,6 +8,7 @@
 // 免费试探，预算就退化成一个建议值。预留即消耗让每次执行都有真实代价。
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { signRecord, verifyRecord } from './signing.js'
 
 export const BUCKETS = [
   'execution',
@@ -46,12 +47,17 @@ export function normalizeBudget(raw) {
   return out
 }
 
-export async function readLedger(runDir) {
+/**
+ * @param key 本 run 的签名密钥（signingContext 给出）。给了就逐行验签并检查链：
+ *   每行 seq 必须连续、prev 必须等于上一行的 sig —— 删除、调换、改写中间行都会被发现。
+ *   验不过的行仍计入用量（宁可少算余额），tampered 非零时调用方应拒绝继续执行。
+ */
+export async function readLedger(runDir, { key = null } = {}) {
   let text = ''
   try {
     text = await readFile(ledgerPath(runDir), 'utf8')
   } catch (error) {
-    if (error.code === 'ENOENT') return { entries: [], corrupted: 0 }
+    if (error.code === 'ENOENT') return { entries: [], corrupted: 0, tampered: 0 }
     throw error
   }
   const entries = []
@@ -65,7 +71,17 @@ export async function readLedger(runDir) {
       corrupted += 1
     }
   }
-  return { entries, corrupted }
+  let tampered = 0
+  if (key !== null) {
+    let prev = null
+    entries.forEach((entry, index) => {
+      if (!verifyRecord(key, entry) || entry.seq !== index + 1 || (entry.prev ?? null) !== prev) tampered += 1
+      prev = typeof entry?.sig === 'string' ? entry.sig : null
+    })
+    // 坏行（解析失败）在签名 run 里也视为篡改
+    tampered += corrupted
+  }
+  return { entries, corrupted, tampered }
 }
 
 export function usageOf(entries) {
@@ -86,14 +102,18 @@ export function remainingOf(budget, entries) {
   return out
 }
 
-export async function appendLedger(runDir, entry) {
+export async function appendLedger(runDir, entry, { key = null } = {}) {
   await mkdir(runDir, { recursive: true })
   const { entries } = await readLedger(runDir)
-  const record = {
+  let record = {
     seq: entries.length + 1,
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     ts: new Date().toISOString(),
     ...entry,
+  }
+  if (key !== null) {
+    const last = entries[entries.length - 1]
+    record = signRecord(key, { ...record, prev: typeof last?.sig === 'string' ? last.sig : null })
   }
   // 单行一次 appendFile：O_APPEND 下这种小写入不会被其它 append 从中间插入。
   await appendFile(ledgerPath(runDir), JSON.stringify(record) + '\n', 'utf8')
@@ -104,7 +124,7 @@ export async function appendLedger(runDir, entry) {
  * 预留一次消耗。余额不足时返回 ok:false，调用方必须停止而不是继续执行。
  * 注意：没有 refund / release —— 预留出去就是花掉了，这是刻意的。
  */
-export async function reserve(runDir, { bucket, amount = 1, budget, oracle_id = null, note = '' }) {
+export async function reserve(runDir, { bucket, amount = 1, budget, oracle_id = null, note = '', key = null }) {
   if (!BUCKETS.includes(bucket)) {
     return { ok: false, error: 'unknown-bucket', bucket, known: BUCKETS }
   }
@@ -127,6 +147,6 @@ export async function reserve(runDir, { bucket, amount = 1, budget, oracle_id = 
     amount: need,
     oracle_id,
     note,
-  })
+  }, { key })
   return { ok: true, entry: record, remaining: { ...remaining, [bucket]: remaining[bucket] - need } }
 }

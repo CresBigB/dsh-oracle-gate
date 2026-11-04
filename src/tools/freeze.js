@@ -12,6 +12,7 @@ import { normalizeBudget, DEFAULT_BUDGET, BUCKETS } from '../kernel/ledger.js'
 import { freezeOracles, validateOracle } from '../kernel/oracles.js'
 import { compileAcceptance } from '../kernel/compile.js'
 import { runDirOf } from '../kernel/run.js'
+import { SIG_ALG, defaultKeyFile, loadKey } from '../kernel/signing.js'
 
 const OUT_SCHEMA = {
   type: 'object',
@@ -57,7 +58,7 @@ export function registerFreezeTool(ctx) {
         oracles: {
           type: 'json',
           description:
-            '判据数组（与 acceptance 二选一，给了就优先用它）。每项形如 {"id":"L0-typecheck","level":"L0","criterion":"类型检查通过","command":"npx tsc --noEmit","cwd":".","bucket":"execution","timeout_ms":120000,"expect":{"exit_code":0}}。也可用 "argv":["npx","tsc","--noEmit"] 代替 command，数组每项原样作为一个参数（参数里有空格、引号或 & 等字面字符时用它）。expect 除 exit_code 外还支持输出断言：stdout_includes / stdout_excludes / stdout_matches（及 stderr_ 同名三项，值为字符串或字符串数组）、stdout_json:[{"path":"summary.failed","op":"==","value":0}]（op 取 == != < <= > >=），断言基于完整输出判定。冻结时会预检：命令找不到、expect 写错或含未知字段都直接拒绝。Windows 下 npx/npm 等 .cmd 脚本可直接写名字。L2/L3 是人工判据，可以不写 command。command 里禁止出现管道、重定向、&& 等 shell 元字符——要跑多个进程就拆成多条判据。',
+            '判据数组（与 acceptance 二选一，给了就优先用它）。每项形如 {"id":"L0-typecheck","level":"L0","criterion":"类型检查通过","command":"npx tsc --noEmit","cwd":".","bucket":"execution","timeout_ms":120000,"expect":{"exit_code":0}}。也可用 "argv":["npx","tsc","--noEmit"] 代替 command，数组每项原样作为一个参数（参数里有空格、引号或 & 等字面字符时用它）。expect 除 exit_code 外还支持输出断言：stdout_includes / stdout_excludes / stdout_matches（及 stderr_ 同名三项，值为字符串或字符串数组）、stdout_json:[{"path":"summary.failed","op":"==","value":0}]（op 取 == != < <= > >=），断言基于完整输出判定。冻结时会预检：命令找不到、expect 写错或含未知字段都直接拒绝。命令里点到的本地文件会自动锁定哈希；被它 import 的模块、读取的数据等，用 "lock_paths":["src/lib","tests/fixtures"] 显式加锁（目录递归，跳过 node_modules/.git/.protocol-kit，上限 2000 个文件），冻结后这些文件被改就拒绝执行。新冻结的 run 会对回执、账本、评审存档做 HMAC 签名（密钥默认 ~/.dsh/oracle-gate/hmac.key，可用环境变量 ORACLE_GATE_KEY_FILE 指定），手工改这些文件会被识别为篡改。Windows 下 npx/npm 等 .cmd 脚本可直接写名字。L2/L3 是人工判据，可以不写 command。command 里禁止出现管道、重定向、&& 等 shell 元字符——要跑多个进程就拆成多条判据。',
         },
         acceptance: {
           type: 'json',
@@ -214,11 +215,23 @@ export function registerFreezeTool(ctx) {
           }
         }
 
+        // 新 run 默认启用签名：密钥在 root 之外（默认 ~/.dsh/oracle-gate/hmac.key，可用
+        // ORACLE_GATE_KEY_FILE 覆盖），不存在就生成。oracles.json 里只登记 key_id，不含密钥。
+        let signing = null
+        let signingNote = ''
+        try {
+          const loadedKey = loadKey({ file: defaultKeyFile(), create: true })
+          signing = { alg: SIG_ALG, key_id: loadedKey.key_id }
+        } catch (error) {
+          signingNote = `签名密钥不可用，本 run 不签名：${error instanceof Error ? error.message : String(error)}`
+        }
+
         const frozen = await freezeOracles(runDir, {
           root,
           run_id: runId,
           budget,
           oracles: oracleList,
+          signing,
         })
 
         if (!frozen.ok) {
@@ -236,7 +249,7 @@ export function registerFreezeTool(ctx) {
         const manual = doc.oracles.length - executable
         return {
           ok: true,
-          summary: `已冻结 ${doc.oracles.length} 条判据（可执行 ${executable} / 人工 ${manual}），hash ${doc.hash.slice(0, 20)}…`,
+          summary: `已冻结 ${doc.oracles.length} 条判据（可执行 ${executable} / 人工 ${manual}），hash ${doc.hash.slice(0, 20)}…；${doc.signing ? `回执/账本/评审将用 HMAC 签名（${doc.signing.key_id}）` : signingNote || '未启用签名'}`,
           run_dir: runDir,
           hash: doc.hash,
           budget,

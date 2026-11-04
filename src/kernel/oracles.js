@@ -3,7 +3,7 @@
 // 铁律（AGENTS.md）：oracle_gate_exec 只能按冻结判据 id 执行命令，禁止接受任意命令。
 // 所以命令的唯一入口是 freeze，而 freeze 只能成功一次。
 import { createHash } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { BUCKETS } from './ledger.js'
@@ -150,6 +150,10 @@ export function validateOracle(oracle, root, options = {}) {
   }
   const expectCheck = validateExpect(oracle.expect)
   if (!expectCheck.ok) return { ok: false, error: expectCheck.error, id, hint: expectCheck.hint }
+  if (oracle.lock_paths !== undefined && oracle.lock_paths !== null) {
+    const locked = lockedFiles(root, oracle.lock_paths)
+    if (!locked.ok) return { ...locked, id }
+  }
   // 冻结前预检：命令找不到就现在报错，别等到 exec 时才发现、白扣一次预算。
   if (options.preflight !== false) {
     const found = resolveExecutable(argv[0], { cwd, env: options.env, platform: options.platform })
@@ -170,7 +174,7 @@ export function validateOracle(oracle, root, options = {}) {
  * 冻结判据。成功后再调用会返回 already-frozen，不会覆盖 —— 覆盖就等于允许改判据，
  * 冻结也就失去意义了。要换判据请开新的 run。
  */
-export async function freezeOracles(runDir, { root, run_id, budget, oracles, preflight, env, platform }) {
+export async function freezeOracles(runDir, { root, run_id, budget, oracles, preflight, env, platform, signing = null }) {
   if (!Array.isArray(oracles) || oracles.length === 0) {
     return { ok: false, error: 'no-oracles' }
   }
@@ -194,6 +198,8 @@ export async function freezeOracles(runDir, { root, run_id, budget, oracles, pre
       return { ok: false, error: 'duplicate-id', id: check.id }
     }
     seen.add(check.id)
+    const locked = check.manual ? { ok: true, files: [], paths: [] } : lockedFiles(root, raw.lock_paths)
+    if (!locked.ok) return { ok: false, error: 'invalid-oracle', detail: { ...locked, id: check.id } }
     normalized.push({
       id: check.id,
       level: raw.level,
@@ -207,7 +213,8 @@ export async function freezeOracles(runDir, { root, run_id, budget, oracles, pre
       manual: check.manual,
       // 判据冻结的不能只是命令文本。命令里点到的每个本地文件，冻结时记下内容哈希，
       // 执行前重算 —— 否则改一句断言就能改判定，而 oracles.json 的哈希对此无感。
-      files: check.manual ? [] : filesOfCommand(root, check.argv),
+      files: check.manual ? [] : mergeFiles(filesOfCommand(root, check.argv), locked.files),
+      lock_paths: locked.paths,
     })
   }
 
@@ -218,6 +225,8 @@ export async function freezeOracles(runDir, { root, run_id, budget, oracles, pre
     frozen_at: new Date().toISOString(),
     budget,
     oracles: normalized,
+    // 签名登记在 oracles.json 本体里（受哈希保护）：不能靠删掉这个字段把验签关掉。
+    ...(signing ? { signing } : {}),
   }
   const doc = { ...body, hash: hashOf(body) }
   await mkdir(runDir, { recursive: true })
@@ -333,6 +342,67 @@ export function filesOfCommand(root, argv) {
     out.push({ path: key, sha256: sha256OfFile(abs), bytes: info.size })
   }
   return out
+}
+
+const LOCK_FILE_LIMIT = 2000
+const LOCK_SKIP_DIRS = new Set(['node_modules', '.git', '.protocol-kit'])
+
+/**
+ * lock_paths：判据显式声明「还要锁住哪些文件或目录」。
+ * filesOfCommand 只锁命令里直接点到的文件；被它 import 的模块、读的数据目录都不在锁内。
+ * 目录递归展开（跳过 node_modules/.git/.protocol-kit）；冻结后在目录里新增的文件不会被发现。
+ * 返回 { ok, files:[{path,sha256,bytes}], paths:[相对路径] } 或 { ok:false, error, hint }。
+ */
+export function lockedFiles(root, raw) {
+  if (raw === undefined || raw === null) return { ok: true, files: [], paths: [] }
+  if (!Array.isArray(raw) || raw.some((item) => typeof item !== 'string' || item.trim() === '')) {
+    return { ok: false, error: 'bad-lock-paths', hint: 'lock_paths 必须是非空字符串数组，例如 ["src/lib","tests/fixtures/a.json"]' }
+  }
+  const base = resolve(root)
+  const out = []
+  const seen = new Set()
+  const add = (abs, info) => {
+    const key = relative(base, abs).split(sep).join('/')
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push({ path: key, sha256: sha256OfFile(abs), bytes: info.size })
+  }
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (out.length > LOCK_FILE_LIMIT) return
+      const abs = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (!LOCK_SKIP_DIRS.has(entry.name)) walk(abs)
+      } else if (entry.isFile()) {
+        add(abs, statSync(abs))
+      }
+    }
+  }
+  const paths = []
+  for (const item of raw) {
+    const abs = isAbsolute(item.trim()) ? resolve(item.trim()) : resolve(base, item.trim())
+    if (abs === base || !inside(base, abs)) {
+      return { ok: false, error: 'lock-path-outside-root', found: item, hint: 'lock_paths 必须是 root 之内的文件或子目录（不能是 root 本身）' }
+    }
+    let info
+    try {
+      info = statSync(abs)
+    } catch {
+      return { ok: false, error: 'lock-path-not-found', found: item, hint: `lock_paths 里的 ${item} 不存在` }
+    }
+    if (info.isDirectory()) walk(abs)
+    else if (info.isFile()) add(abs, info)
+    if (out.length > LOCK_FILE_LIMIT) {
+      return { ok: false, error: 'lock-paths-too-many', found: item, hint: `lock_paths 展开后超过 ${LOCK_FILE_LIMIT} 个文件，请缩小范围` }
+    }
+    paths.push(relative(base, abs).split(sep).join('/'))
+  }
+  return { ok: true, files: out, paths }
+}
+
+function mergeFiles(a, b) {
+  const seen = new Set(a.map((item) => item.path))
+  return [...a, ...b.filter((item) => !seen.has(item.path))]
 }
 
 /** 执行前核对：冻结时记下的文件是否还在、内容是否还是那份。 */

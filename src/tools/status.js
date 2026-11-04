@@ -18,6 +18,7 @@ import { renderRunStatus, summarizeRunStatus } from '../kernel/status.js'
 import { codeFingerprint } from '../kernel/fingerprint.js'
 import { makeRefChecker } from '../kernel/evidence.js'
 import { mergeReviews, readReviews } from '../kernel/reviews.js'
+import { signingContext } from '../kernel/signing.js'
 
 // 三种失败码各自该怎么查。
 // 原来这里只判一个 `'oracles-unavailable'`，而 loadOracles 从不产生这个码
@@ -132,11 +133,15 @@ export function registerStatusTool(ctx) {
           }
         }
 
-        const ledger = await readLedger(runDir)
-        const receiptRead = await readReceipts(runDir)
+        // 与 gate 同口径验签；密钥不可用时如实报错而不是不验签地算下去
+        const signingCtx = signingContext(loaded.doc)
+        if (!signingCtx.ok) return { ...bad(`签名校验不可用：${signingCtx.hint}`, signingCtx.error), run_dir: runDir }
+        const key = signingCtx.key
+        const ledger = await readLedger(runDir, { key })
+        const receiptRead = await readReceipts(runDir, { key })
         // 与 oracle_gate_gate 同口径：合并存档评审、检查代码指纹与证据引用。status 只读，不写存档。
         const fingerprint = codeFingerprint(root)
-        const { reviews: archived } = await readReviews(runDir)
+        const { reviews: archived, tampered: tamperedReviews = 0 } = await readReviews(runDir, { key })
         const merged = mergeReviews({ passed: normalizeReviews(args.reviews), archived, fingerprint })
         const reviews = merged.reviews
         const checkRef = makeRefChecker(root, {
@@ -154,6 +159,13 @@ export function registerStatusTool(ctx) {
           fingerprint,
           checkRef,
         })
+        const tampered = { receipts: receiptRead.tampered ?? 0, reviews: tamperedReviews, ledger: ledger.tampered ?? 0 }
+        if (tampered.receipts > 0) status.notes.push(`${tampered.receipts} 份回执签名不符，已不采信`)
+        if (tampered.reviews > 0) status.notes.push(`${tampered.reviews} 条存档评审签名不符，已不采信`)
+        if (tampered.ledger > 0) {
+          status.notes.push(`账本有 ${tampered.ledger} 行签名或链校验不通过，本 run 不可信`)
+          status.verdict = 'rejected'
+        }
 
         return {
           ok: true,
@@ -172,6 +184,7 @@ export function registerStatusTool(ctx) {
           receipts_total: status.receipts_total,
           skipped_receipts: status.skipped_receipts,
           corrupted_entries: status.corrupted_entries,
+          tampered,
           run_dir: runDir,
           error: '',
         }

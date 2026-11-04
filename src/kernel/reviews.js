@@ -7,6 +7,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { freshnessOf } from './fingerprint.js'
+import { signRecord, verifyRecord } from './signing.js'
 
 export const REVIEWS_FILE = 'reviews.jsonl'
 
@@ -14,39 +15,52 @@ export function reviewsPath(runDir) {
   return join(runDir, REVIEWS_FILE)
 }
 
-export async function appendReviews(runDir, reviews, fingerprint) {
+export async function appendReviews(runDir, reviews, fingerprint, { key = null } = {}) {
   if (reviews.length === 0) return 0
   await mkdir(runDir, { recursive: true })
   const recordedAt = new Date().toISOString()
-  const lines = reviews.map((review) => JSON.stringify({
-    ...review,
-    oracle_id: String(review.oracle_id ?? review.id ?? ''),
-    recorded_at: recordedAt,
-    code_fingerprint: fingerprint ?? null,
-  }))
+  const lines = reviews.map((review) => {
+    // 先走一遍 JSON 往返，去掉 undefined，保证签名时和读回时看到的是同一个对象
+    const record = JSON.parse(JSON.stringify({
+      ...review,
+      oracle_id: String(review.oracle_id ?? review.id ?? ''),
+      recorded_at: recordedAt,
+      code_fingerprint: fingerprint ?? null,
+    }))
+    return JSON.stringify(key !== null ? signRecord(key, record) : record)
+  })
   await appendFile(reviewsPath(runDir), lines.join('\n') + '\n', 'utf8')
   return lines.length
 }
 
-export async function readReviews(runDir) {
+export async function readReviews(runDir, { key = null } = {}) {
   let text = ''
   try {
     text = await readFile(reviewsPath(runDir), 'utf8')
   } catch (error) {
-    if (error.code === 'ENOENT') return { reviews: [], corrupted: 0 }
+    if (error.code === 'ENOENT') return { reviews: [], corrupted: 0, tampered: 0 }
     throw error
   }
   const reviews = []
   let corrupted = 0
+  let tampered = 0
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue
+    let parsed
     try {
-      reviews.push(JSON.parse(line))
+      parsed = JSON.parse(line)
     } catch {
       corrupted += 1
+      continue
     }
+    // 签名对不上的存档评审不采信（手工塞进去的 pass 不算数）
+    if (key !== null && !verifyRecord(key, parsed)) {
+      tampered += 1
+      continue
+    }
+    reviews.push(parsed)
   }
-  return { reviews, corrupted }
+  return { reviews, corrupted, tampered }
 }
 
 /**

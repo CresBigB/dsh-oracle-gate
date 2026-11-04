@@ -15,6 +15,8 @@ import { runDirOf } from '../kernel/run.js'
 import { codeFingerprint } from '../kernel/fingerprint.js'
 import { makeRefChecker } from '../kernel/evidence.js'
 import { appendReviews, mergeReviews, readReviews } from '../kernel/reviews.js'
+import { readLedger } from '../kernel/ledger.js'
+import { signingContext } from '../kernel/signing.js'
 
 const OUT_SCHEMA = {
   type: 'object',
@@ -132,15 +134,19 @@ export function registerGateTool(ctx) {
           )
         }
 
+        const signingCtx = signingContext(loaded.doc)
+        if (!signingCtx.ok) return bad(`签名校验不可用，无法裁决：${signingCtx.hint}`, signingCtx.error)
+        const key = signingCtx.key
         const passedIn = normalizeReviews(args.reviews)
-        const { receipts } = await readReceipts(runDir)
+        const { receipts, tampered: tamperedReceipts = 0 } = await readReceipts(runDir, { key })
+        const ledgerAudit = key !== null ? await readLedger(runDir, { key }) : { tampered: 0 }
         const fingerprint = codeFingerprint(root)
         // 本次传入的评审先存档（带当时的代码指纹），再与历史存档合并：没传的判据沿用存档里
         // 最新且仍对应当前代码的那条。存档只追加，不改写。
         const manualIds = new Set(loaded.doc.oracles.filter((oracle) => oracle.manual).map((oracle) => oracle.id))
         const toArchive = passedIn.filter((review) => manualIds.has(String(review.oracle_id ?? review.id ?? '')))
-        const { reviews: archived } = await readReviews(runDir)
-        await appendReviews(runDir, toArchive, fingerprint.kind === 'git' ? { kind: 'git', head: fingerprint.head, value: fingerprint.value } : null)
+        const { reviews: archived, tampered: tamperedReviews = 0 } = await readReviews(runDir, { key })
+        await appendReviews(runDir, toArchive, fingerprint.kind === 'git' ? { kind: 'git', head: fingerprint.head, value: fingerprint.value } : null, { key })
         const merged = mergeReviews({ passed: passedIn, archived, fingerprint })
         const checkRef = makeRefChecker(root, {
           receiptIds: new Set(receipts.map((receipt) => receipt.receipt_id).filter((id) => typeof id === 'string')),
@@ -149,6 +155,14 @@ export function registerGateTool(ctx) {
         if (merged.from_archive.length > 0) result.notes.push(`沿用存档评审：${merged.from_archive.join('、')}`)
         if (merged.stale_reviews.length > 0) result.notes.push(`存档评审针对的是旧代码，不再采信：${merged.stale_reviews.join('、')}`)
         if (fingerprint.kind !== 'git') result.notes.push('root 不是 git 工作区：没有检查回执/评审是否对应当前代码')
+        if (tamperedReceipts > 0) result.notes.push(`${tamperedReceipts} 份回执签名不符，已不采信（按未跑处理）`)
+        if (tamperedReviews > 0) result.notes.push(`${tamperedReviews} 条存档评审签名不符，已不采信`)
+        if (key === null) result.notes.push('本 run 冻结时未启用签名：回执/账本/评审未做防篡改校验')
+        // 账本被删改：预算记录不可信，整个 run 不能准入
+        if (ledgerAudit.tampered > 0) {
+          result.notes.push(`账本有 ${ledgerAudit.tampered} 行签名或链校验不通过，本 run 不可信`)
+          result.verdict = 'rejected'
+        }
 
         return {
           ok: true,
@@ -157,6 +171,7 @@ export function registerGateTool(ctx) {
           reviews_from_archive: merged.from_archive,
           stale_reviews: merged.stale_reviews,
           code_fingerprint: fingerprint,
+          tampered: { receipts: tamperedReceipts, reviews: tamperedReviews, ledger: ledgerAudit.tampered },
           next_step: NEXT_BY_VERDICT[result.verdict] ?? '',
           error: '',
         }

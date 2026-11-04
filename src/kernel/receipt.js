@@ -6,6 +6,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { buildSpawnPlan, killTree } from './command.js'
 import { evaluateExpect, hasOutputAssertions } from './expect.js'
+import { signRecord, verifyRecord } from './signing.js'
 
 export const MAX_CAPTURE = 8000
 const HARD_CAP = MAX_CAPTURE * 8
@@ -29,28 +30,36 @@ export function receiptsDir(runDir) {
  * 原来这个函数是 src/tools/gate.js 的私有实现；oracle_gate_status 也要读回执，
  * 与其复制一份「坏文件跳过」的语义，不如上提到内核，让两个工具共用一套口径。
  */
-export async function readReceipts(runDir) {
+export async function readReceipts(runDir, { key = null } = {}) {
   const dir = receiptsDir(runDir)
   let names = []
   try {
     names = await readdir(dir)
   } catch (error) {
-    if (error.code === 'ENOENT') return { receipts: [], files: 0, skipped: 0 }
+    if (error.code === 'ENOENT') return { receipts: [], files: 0, skipped: 0, tampered: 0 }
     throw error
   }
   const receipts = []
   let files = 0
+  let tampered = 0
   for (const name of names) {
     if (!name.endsWith('.json')) continue
     files += 1
+    let parsed
     try {
-      const text = await readFile(join(dir, name), 'utf8')
-      receipts.push(JSON.parse(text))
+      parsed = JSON.parse(await readFile(join(dir, name), 'utf8'))
     } catch {
       /* 坏回执跳过：不因为一个文件坏掉就让整个裁决不可用 */
+      continue
     }
+    // 签名对不上的回执不采信：等同于这条判据没跑过（而不是跑过且通过）
+    if (key !== null && !verifyRecord(key, parsed)) {
+      tampered += 1
+      continue
+    }
+    receipts.push(parsed)
   }
-  return { receipts, files, skipped: files - receipts.length }
+  return { receipts, files, skipped: files - receipts.length - tampered, tampered }
 }
 
 /**
@@ -158,16 +167,18 @@ export function executeOracle({ root, oracle, signal, env = process.env, platfor
   })
 }
 
-export async function writeReceipt(runDir, receipt, seq) {
+export async function writeReceipt(runDir, receipt, seq, { key = null } = {}) {
   const dir = receiptsDir(runDir)
   await mkdir(dir, { recursive: true })
   const safeId = String(receipt.oracle_id).replace(/[^a-zA-Z0-9._-]+/g, '_')
   const file = join(dir, `${safeId}__${String(seq).padStart(4, '0')}.json`)
-  const body = {
+  let body = {
     ...receipt,
     receipt_id: `rcpt_${seq}_${safeId}`,
     recorded_at: new Date().toISOString(),
   }
+  // JSON 往返去掉 undefined，保证签名对象与读回对象一致
+  if (key !== null) body = signRecord(key, JSON.parse(JSON.stringify(body)))
   await writeFile(file, JSON.stringify(body, null, 2) + '\n', 'utf8')
   return { file, receipt: body }
 }

@@ -10,6 +10,9 @@ import { registerExecTool } from '../src/tools/exec.js'
 import { registerGateTool } from '../src/tools/gate.js'
 import { registerStatusTool } from '../src/tools/status.js'
 
+// 测试不碰真实的 ~/.dsh/oracle-gate/hmac.key
+process.env.ORACLE_GATE_KEY_FILE = join(mkdtempSync(join(tmpdir(), 'og-key-')), 'hmac.key')
+
 function host() {
   const tools = new Map()
   const ctx = { tools: { register: (tool) => tools.set(tool.name, tool) } }

@@ -13,6 +13,7 @@ import { findOracle, loadOracles, verifyFiles } from '../kernel/oracles.js'
 import { executeOracle, writeReceipt, verdictOf } from '../kernel/receipt.js'
 import { codeFingerprint } from '../kernel/fingerprint.js'
 import { runDirOf } from '../kernel/run.js'
+import { signingContext } from '../kernel/signing.js'
 
 const OUT_SCHEMA = {
   type: 'object',
@@ -155,6 +156,21 @@ export function registerExecTool(ctx) {
           )
         }
 
+        // 签名 run：先确认密钥还是冻结时那把、账本没被删改过，再谈预留。
+        const signingCtx = signingContext(loaded.doc)
+        if (!signingCtx.ok) return bad(`签名校验不可用，拒绝执行：${signingCtx.hint}`, signingCtx.error, { oracle_id: oracleId })
+        const key = signingCtx.key
+        if (key !== null) {
+          const audit = await readLedger(runDir, { key })
+          if (audit.tampered > 0) {
+            return bad(
+              `账本 ledger.jsonl 有 ${audit.tampered} 行签名或链校验不通过（被删改过），本 run 不可信，拒绝执行。请开新的 run-id 重新冻结。`,
+              'ledger-tampered',
+              { oracle_id: oracleId },
+            )
+          }
+        }
+
         // 预算在冻结时定死。若允许执行时传 budget，「超了就把额度调高」就是一条后门。
         const budget = normalizeBudget(loaded.doc.budget)
         const reserved = await reserve(runDir, {
@@ -163,6 +179,7 @@ export function registerExecTool(ctx) {
           budget,
           oracle_id: oracle.id,
           note: oracle.command,
+          key,
         })
         if (!reserved.ok) {
           return bad(
@@ -182,7 +199,7 @@ export function registerExecTool(ctx) {
           ? { kind: 'git', head: before.head, dirty: before.dirty, value: before.value, after: after.value }
           : { kind: 'none', value: null }
         const { entries } = await readLedger(runDir)
-        const { file, receipt } = await writeReceipt(runDir, result, entries.length)
+        const { file, receipt } = await writeReceipt(runDir, result, entries.length, { key })
         const verdict = verdictOf(receipt)
 
         const tail = receipt.stderr_head.trim().split('\n').slice(-6).join('\n')
