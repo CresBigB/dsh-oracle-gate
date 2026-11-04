@@ -5,6 +5,7 @@
 //   2. 缺证据其次 —— 判据还没跑完就不能说通过，但也不该判成失败，那是「还不知道」。
 //   3. 只缺人工判断时转 blocked-on-human —— 这不是失败，是需要人拍板。
 import { verdictOf } from './receipt.js'
+import { freshnessOf } from './fingerprint.js'
 
 export const VERDICTS = ['pass', 'rejected', 'insufficient-evidence', 'blocked-on-human']
 
@@ -59,7 +60,13 @@ function reviewIndex(reviews) {
   return byOracle
 }
 
-export function evaluateGate({ doc, receipts, reviews = [] }) {
+/**
+ * @param fingerprint 当前代码指纹（codeFingerprint 的返回值）。给了就做新鲜度检查：
+ *   回执记录的指纹与当前不符 → 该判据视为「未跑」（代码变了，旧结果不再代表现在的代码）。
+ * @param checkRef    (ref) => {ok, reason}。给了就逐条核对评审的 evidence_refs，有无效引用即不准入。
+ * 两者都不给时与旧行为完全一致。
+ */
+export function evaluateGate({ doc, receipts, reviews = [], fingerprint = null, checkRef = null }) {
   const latest = latestReceipts(receipts)
   const reviewBy = reviewIndex(reviews)
 
@@ -70,6 +77,8 @@ export function evaluateGate({ doc, receipts, reviews = [] }) {
   const vetoed = []
   const withUnknowns = []
   const withoutEvidenceRefs = []
+  const badEvidenceRefs = []
+  const stale = []
 
   for (const oracle of doc.oracles) {
     if (oracle.manual) {
@@ -84,8 +93,16 @@ export function evaluateGate({ doc, receipts, reviews = [] }) {
       if (veto) vetoed.push(oracle.id)
       if (unknowns.length > 0) withUnknowns.push({ id: oracle.id, unknowns })
       if (refs.length === 0) withoutEvidenceRefs.push(oracle.id)
-      if (veto || unknowns.length > 0 || refs.length === 0) {
-        failed.push({ id: oracle.id, reason: veto ? 'veto' : unknowns.length > 0 ? 'unknowns' : 'no-evidence-refs' })
+      const invalid = typeof checkRef === 'function'
+        ? refs.map((ref) => ({ ref, check: checkRef(ref) })).filter((item) => !item.check.ok)
+          .map((item) => ({ ref: String(item.ref), reason: item.check.reason }))
+        : []
+      if (invalid.length > 0) badEvidenceRefs.push({ id: oracle.id, refs: invalid })
+      if (veto || unknowns.length > 0 || refs.length === 0 || invalid.length > 0) {
+        failed.push({
+          id: oracle.id,
+          reason: veto ? 'veto' : unknowns.length > 0 ? 'unknowns' : refs.length === 0 ? 'no-evidence-refs' : 'bad-evidence-refs',
+        })
       } else if (review.verdict === 'fail') {
         failed.push({ id: oracle.id, reason: 'review-failed' })
       } else {
@@ -96,6 +113,12 @@ export function evaluateGate({ doc, receipts, reviews = [] }) {
 
     const receipt = latest.get(oracle.id)
     if (receipt === undefined) {
+      missing.push(oracle.id)
+      continue
+    }
+    if (fingerprint !== null && freshnessOf(receipt.code_fingerprint, fingerprint) === 'stale') {
+      // 代码在这份回执之后变过：无论当时过没过，都不能代表现在的代码，要重跑。
+      stale.push(oracle.id)
       missing.push(oracle.id)
       continue
     }
@@ -116,6 +139,8 @@ export function evaluateGate({ doc, receipts, reviews = [] }) {
   const notes = []
   if (vetoed.length > 0) notes.push(`评审投了 veto：${vetoed.join('、')} —— 这条不是「再改改」，是方案方向被否了`)
   if (withUnknowns.length > 0) notes.push(`评审有 unknowns 未解决：${withUnknowns.map((item) => item.id).join('、')}`)
+  if (stale.length > 0) notes.push(`${stale.length} 条判据的回执对应的是旧代码（之后代码改过）：${stale.join('、')} —— 已按「未跑」处理，需要重跑`)
+  if (badEvidenceRefs.length > 0) notes.push(`评审引用了不存在的证据：${badEvidenceRefs.map((item) => `${item.id}（${item.refs.map((r) => r.ref).join('、')}）`).join('；')}`)
   if (missing.length > 0) notes.push(`还有 ${missing.length} 条判据没跑：${missing.join('、')} —— 没跑不等于过，也不等于失败`)
   // 措辞刻意不说「没人评」：reviews 是不落盘的调用参数，gate 无从知道历史上有没有人评过，
   // 只能说「这次没传进来」。评审（2026-11-01，L3-1-F3）指出原文把「本次没传 reviews」
@@ -133,6 +158,8 @@ export function evaluateGate({ doc, receipts, reviews = [] }) {
     vetoed,
     with_unknowns: withUnknowns,
     without_evidence_refs: withoutEvidenceRefs,
+    bad_evidence_refs: badEvidenceRefs,
+    stale,
     notes,
   }
 }

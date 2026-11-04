@@ -12,6 +12,9 @@ import { loadOracles } from '../kernel/oracles.js'
 import { evaluateGate, NEXT_BY_VERDICT, normalizeReviews, summarizeGate } from '../kernel/gate.js'
 import { readReceipts } from '../kernel/receipt.js'
 import { runDirOf } from '../kernel/run.js'
+import { codeFingerprint } from '../kernel/fingerprint.js'
+import { makeRefChecker } from '../kernel/evidence.js'
+import { appendReviews, mergeReviews, readReviews } from '../kernel/reviews.js'
 
 const OUT_SCHEMA = {
   type: 'object',
@@ -28,6 +31,11 @@ const OUT_SCHEMA = {
     vetoed: { type: 'json' },
     with_unknowns: { type: 'json' },
     without_evidence_refs: { type: 'json' },
+    bad_evidence_refs: { type: 'json' },
+    stale: { type: 'json' },
+    reviews_from_archive: { type: 'json' },
+    stale_reviews: { type: 'json' },
+    code_fingerprint: { type: 'json' },
     next_step: { type: 'string' },
     error: { type: 'string' },
   },
@@ -43,14 +51,15 @@ export function registerGateTool(ctx) {
         '判据都跑完之后算准入结论：pass / rejected / insufficient-evidence / blocked-on-human。'
         + '由「已冻结判据 + 真实执行回执 + 结构化评审」算出来，硬门失败时人工传 pass 也无效。'
         + '人工判据（L2/L3）的结论必须通过 reviews 传进来，任一 veto、unknowns 非空或缺少 evidence_refs 都不准入。'
-        + '不要用我来给自己打分：pass 只代表「冻结的判据都过了」，不代表活儿干得对。不读任何 agent 的自我评价。',
+        + '不要用我来给自己打分：pass 只代表「冻结的判据都过了」，不代表活儿干得对。不读任何 agent 的自我评价。'
+        + '在 git 工作区里，回执若对应的是旧代码（执行之后又改过代码），该判据按「未跑」处理，需要重跑。',
       parameters: {
         root: { type: 'string', required: true, description: '项目根目录绝对路径（与冻结时相同）。' },
         run_id: { type: 'string', required: true, description: '冻结时使用的 run_id。' },
         reviews: {
           type: 'json',
           description:
-            '人工判据的评审结论。数组形式：[{"oracle_id":"L2-code-review","verdict":"pass","veto":false,"unknowns":[],"evidence_refs":["src/a.ts:12"]}]；也可写成按判据 id 索引的对象：{"L2-code-review":{"verdict":"pass","veto":false,"unknowns":[],"evidence_refs":["src/a.ts:12"]}}。两种都接受。veto 为 true、unknowns 非空、或 evidence_refs 为空都会导致该判据不通过。',
+            '人工判据的评审结论。数组形式：[{"oracle_id":"L2-code-review","verdict":"pass","veto":false,"unknowns":[],"evidence_refs":["src/a.ts:12"]}]；也可写成按判据 id 索引的对象：{"L2-code-review":{"verdict":"pass","veto":false,"unknowns":[],"evidence_refs":["src/a.ts:12"]}}。两种都接受。veto 为 true、unknowns 非空、evidence_refs 为空或含无效引用都会导致该判据不通过。evidence_refs 每项须是 root 内真实存在的文件（可带行号，如 src/a.ts:12 或 src/a.ts:12-30，行号不能超出文件）或本 run 的回执 id（如 rcpt_3_L0-test）；URL 与自由文本不算证据。传入的评审会追加存档到 reviews.jsonl（带代码指纹），之后不传 reviews 时沿用存档中仍对应当前代码的最新一条。',
         },
       },
       output: {
@@ -68,6 +77,8 @@ export function registerGateTool(ctx) {
             Array.isArray(value.vetoed) && value.vetoed.length > 0 ? `被 veto：${value.vetoed.join('、')}` : '',
             Array.isArray(value.with_unknowns) && value.with_unknowns.length > 0 ? `带 unknowns：${value.with_unknowns.length} 条` : '',
             Array.isArray(value.without_evidence_refs) && value.without_evidence_refs.length > 0 ? `缺证据引用：${value.without_evidence_refs.length} 条` : '',
+            Array.isArray(value.bad_evidence_refs) && value.bad_evidence_refs.length > 0 ? `无效证据引用：${value.bad_evidence_refs.map((item) => `${item.id}：${item.refs.map((r) => `${r.ref}（${r.reason}）`).join('，')}`).join('；')}` : '',
+            Array.isArray(value.stale) && value.stale.length > 0 ? `回执过期（代码已改）：${value.stale.join('、')}` : '',
             value.notes.length === 0 ? '' : `备注：${value.notes.join('；')}`,
             '',
             value.next_step,
@@ -121,14 +132,31 @@ export function registerGateTool(ctx) {
           )
         }
 
-        const reviews = normalizeReviews(args.reviews)
+        const passedIn = normalizeReviews(args.reviews)
         const { receipts } = await readReceipts(runDir)
-        const result = evaluateGate({ doc: loaded.doc, receipts, reviews })
+        const fingerprint = codeFingerprint(root)
+        // 本次传入的评审先存档（带当时的代码指纹），再与历史存档合并：没传的判据沿用存档里
+        // 最新且仍对应当前代码的那条。存档只追加，不改写。
+        const manualIds = new Set(loaded.doc.oracles.filter((oracle) => oracle.manual).map((oracle) => oracle.id))
+        const toArchive = passedIn.filter((review) => manualIds.has(String(review.oracle_id ?? review.id ?? '')))
+        const { reviews: archived } = await readReviews(runDir)
+        await appendReviews(runDir, toArchive, fingerprint.kind === 'git' ? { kind: 'git', head: fingerprint.head, value: fingerprint.value } : null)
+        const merged = mergeReviews({ passed: passedIn, archived, fingerprint })
+        const checkRef = makeRefChecker(root, {
+          receiptIds: new Set(receipts.map((receipt) => receipt.receipt_id).filter((id) => typeof id === 'string')),
+        })
+        const result = evaluateGate({ doc: loaded.doc, receipts, reviews: merged.reviews, fingerprint, checkRef })
+        if (merged.from_archive.length > 0) result.notes.push(`沿用存档评审：${merged.from_archive.join('、')}`)
+        if (merged.stale_reviews.length > 0) result.notes.push(`存档评审针对的是旧代码，不再采信：${merged.stale_reviews.join('、')}`)
+        if (fingerprint.kind !== 'git') result.notes.push('root 不是 git 工作区：没有检查回执/评审是否对应当前代码')
 
         return {
           ok: true,
           summary: summarizeGate(result),
           ...result,
+          reviews_from_archive: merged.from_archive,
+          stale_reviews: merged.stale_reviews,
+          code_fingerprint: fingerprint,
           next_step: NEXT_BY_VERDICT[result.verdict] ?? '',
           error: '',
         }

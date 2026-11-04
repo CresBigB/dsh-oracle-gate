@@ -28,8 +28,10 @@ export function summarizeRunStatus({
   // 坏行对应的消耗读不出来，余额看起来比实际多（评审 2026-11-01 notes）。
   corruptedEntries = 0,
   reviews = [],
+  fingerprint = null,
+  checkRef = null,
 }) {
-  const gate = evaluateGate({ doc, receipts, reviews })
+  const gate = evaluateGate({ doc, receipts, reviews, fingerprint, checkRef })
 
   // 预算的唯一权威是 oracles.json 的 doc.budget —— 不是 DEFAULT_BUDGET。
   // 真实 run 的 execution 可能是 12，而默认值是 100；用默认值兜底会算出假余额。

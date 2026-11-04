@@ -11,6 +11,7 @@ import { stat } from 'node:fs/promises'
 import { normalizeBudget, reserve, readLedger } from '../kernel/ledger.js'
 import { findOracle, loadOracles, verifyFiles } from '../kernel/oracles.js'
 import { executeOracle, writeReceipt, verdictOf } from '../kernel/receipt.js'
+import { codeFingerprint } from '../kernel/fingerprint.js'
 import { runDirOf } from '../kernel/run.js'
 
 const OUT_SCHEMA = {
@@ -173,7 +174,13 @@ export function registerExecTool(ctx) {
           )
         }
 
+        // 回执绑定代码版本：执行前后各取一次指纹。gate 时当前代码与两者都不符，这份回执就作废。
+        const before = codeFingerprint(root)
         const result = await executeOracle({ root, oracle, signal: undefined })
+        const after = codeFingerprint(root)
+        result.code_fingerprint = before.kind === 'git'
+          ? { kind: 'git', head: before.head, dirty: before.dirty, value: before.value, after: after.value }
+          : { kind: 'none', value: null }
         const { entries } = await readLedger(runDir)
         const { file, receipt } = await writeReceipt(runDir, result, entries.length)
         const verdict = verdictOf(receipt)

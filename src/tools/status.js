@@ -15,6 +15,9 @@ import { readReceipts } from '../kernel/receipt.js'
 import { normalizeReviews } from '../kernel/gate.js'
 import { runDirOf } from '../kernel/run.js'
 import { renderRunStatus, summarizeRunStatus } from '../kernel/status.js'
+import { codeFingerprint } from '../kernel/fingerprint.js'
+import { makeRefChecker } from '../kernel/evidence.js'
+import { mergeReviews, readReviews } from '../kernel/reviews.js'
 
 // 三种失败码各自该怎么查。
 // 原来这里只判一个 `'oracles-unavailable'`，而 loadOracles 从不产生这个码
@@ -131,7 +134,14 @@ export function registerStatusTool(ctx) {
 
         const ledger = await readLedger(runDir)
         const receiptRead = await readReceipts(runDir)
-        const reviews = normalizeReviews(args.reviews)
+        // 与 oracle_gate_gate 同口径：合并存档评审、检查代码指纹与证据引用。status 只读，不写存档。
+        const fingerprint = codeFingerprint(root)
+        const { reviews: archived } = await readReviews(runDir)
+        const merged = mergeReviews({ passed: normalizeReviews(args.reviews), archived, fingerprint })
+        const reviews = merged.reviews
+        const checkRef = makeRefChecker(root, {
+          receiptIds: new Set(receiptRead.receipts.map((receipt) => receipt.receipt_id).filter((id) => typeof id === 'string')),
+        })
 
         const status = summarizeRunStatus({
           doc: loaded.doc,
@@ -141,6 +151,8 @@ export function registerStatusTool(ctx) {
           skippedReceipts: receiptRead.skipped,
           corruptedEntries: typeof ledger.corrupted === 'number' ? ledger.corrupted : 0,
           reviews,
+          fingerprint,
+          checkRef,
         })
 
         return {
