@@ -36,6 +36,10 @@ export function ledgerPath(runDir) {
 }
 
 export function normalizeBudget(raw) {
+  // 简写：直接给一个数字 = 最多执行多少次（execution 桶），其余桶取默认。
+  if (typeof raw === 'number' || (typeof raw === 'string' && /^\d+$/.test(raw.trim()))) {
+    raw = { execution: Number(raw) }
+  }
   const out = {}
   for (const bucket of BUCKETS) {
     const value = raw?.[bucket]

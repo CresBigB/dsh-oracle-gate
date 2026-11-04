@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs'
 /**
  * dsh-oracle-gate — 期 1 通路已验证，期 2 起逐步接入真实协议。
  *
- * 已注册（12 个，统一前缀 oracle_gate_）：
+ * 已注册（13 个，统一前缀 oracle_gate_）：
+ *   - oracle_gate_check      轻量模式：冻结 → 执行 → 裁决一次完成，可自动推荐判据
  *   - oracle_gate            验收台账总入口（模型在「要不要验收」上犹豫时先调它）
  *   - oracle_gate_ping       插件自检
  *   - oracle_gate_inventory  P0 资产盘点（只读或显式落盘）
@@ -33,6 +34,7 @@ import { registerFailuresTool } from './tools/failures.js'
 import { registerDomainTool } from './tools/domain.js'
 import { registerNumericTool } from './tools/numeric.js'
 import { registerStatusTool } from './tools/status.js'
+import { registerCheckTool } from './tools/check.js'
 import { registerEntryTool } from './tools/entry.js'
 
 export const name = 'oracle-gate'
@@ -199,6 +201,9 @@ export function apply(ctx, config) {
   // 期 4c：数值内核（比两条曲线，给出可复算的误差指标）
   safe('oracle_gate_numeric', registerNumericTool)
   safe('oracle_gate_status', registerStatusTool)
+
+  // 第 4 步：轻量模式（冻结 → 执行 → 裁决一次完成，可自动推荐判据）
+  safe('oracle_gate_check', registerCheckTool)
 
   if (skipped.length > 0) {
     try {

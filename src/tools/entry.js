@@ -114,7 +114,8 @@ function renderMarkdown(root, runs) {
   const lines = [`## 验收台账 · \`${root}\``, '']
   if (runs.length === 0) {
     lines.push('这个项目下还没有任何验收记录（`.protocol-kit/` 不存在或为空）。', '')
-    lines.push('需要给一个任务立客观验收标准时，先调 `oracle_gate_freeze` 冻结判据；')
+    lines.push('只想确认测试/类型检查/构建都过时，直接调 `oracle_gate_check`（不给 oracles 会按项目脚本自动推荐）；')
+    lines.push('需要逐条控制或含人工判据时，先调 `oracle_gate_freeze` 冻结判据；')
     lines.push('判据还没想清楚、需求也模糊时，先用 `oracle_gate_run`（stage="clarify"）把需求澄清成可验收的 spec。')
     return lines.join('\n')
   }
@@ -198,7 +199,7 @@ export function registerEntryTool(ctx) {
               summary: '这个项目还没有任何验收记录',
               root,
               runs: [],
-              next_step: '需要验收就 oracle_gate_freeze 冻结判据；需求还模糊就先 oracle_gate_run（stage="clarify"）',
+              next_step: '只想确认测试/构建都过就 oracle_gate_check；要逐条控制就 oracle_gate_freeze 冻结判据；需求还模糊就先 oracle_gate_run（stage="clarify"）',
               markdown,
               error: '',
             }

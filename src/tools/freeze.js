@@ -72,7 +72,7 @@ export function registerFreezeTool(ctx) {
         },
         budget: {
           type: 'json',
-          description: `分桶预算，缺省为 v4 的拆分：${JSON.stringify(DEFAULT_BUDGET)}。可用桶：${BUCKETS.join(' / ')}。预留即消耗，不退款。`,
+          description: `分桶预算，缺省为 v4 的拆分：${JSON.stringify(DEFAULT_BUDGET)}。可用桶：${BUCKETS.join(' / ')}。预留即消耗，不退款。一般不用填；只想限制执行次数时直接给一个数字（如 20），等同 {"execution":20}。`,
         },
       },
       output: {

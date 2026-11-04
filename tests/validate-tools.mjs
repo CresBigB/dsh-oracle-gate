@@ -30,6 +30,7 @@ const { registerFailuresTool } = await import('../src/tools/failures.js')
 const { registerDomainTool } = await import('../src/tools/domain.js')
 const { registerNumericTool } = await import('../src/tools/numeric.js')
 const { registerStatusTool } = await import('../src/tools/status.js')
+const { registerCheckTool } = await import('../src/tools/check.js')
 
 registerInventoryTool(ctx)
 registerDesignTool(ctx)
@@ -41,6 +42,7 @@ registerFailuresTool(ctx)
 registerDomainTool(ctx)
 registerNumericTool(ctx)
 registerStatusTool(ctx)
+registerCheckTool(ctx)
 
 function fakeValue(schema, only) {
   const out = {}
@@ -95,8 +97,8 @@ for (const tool of captured) {
   console.log(`  - ${tool.name}  参数: ${params}`)
 }
 
-if (captured.length !== 10) {
-  console.error(`期望注册 10 个工具，实际 ${captured.length}`)
+if (captured.length !== 11) {
+  console.error(`期望注册 11 个工具，实际 ${captured.length}`)
   process.exit(1)
 }
 
