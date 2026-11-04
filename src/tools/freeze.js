@@ -9,7 +9,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { isAbsolute, resolve } from 'node:path'
 import { stat } from 'node:fs/promises'
 import { normalizeBudget, DEFAULT_BUDGET, BUCKETS } from '../kernel/ledger.js'
-import { freezeOracles } from '../kernel/oracles.js'
+import { freezeOracles, validateOracle } from '../kernel/oracles.js'
 import { compileAcceptance } from '../kernel/compile.js'
 import { runDirOf } from '../kernel/run.js'
 
@@ -57,7 +57,7 @@ export function registerFreezeTool(ctx) {
         oracles: {
           type: 'json',
           description:
-            '判据数组（与 acceptance 二选一，给了就优先用它）。每项形如 {"id":"L0-typecheck","level":"L0","criterion":"类型检查通过","command":"npx tsc --noEmit","cwd":".","bucket":"execution","timeout_ms":120000,"expect":{"exit_code":0}}。L2/L3 是人工判据，可以不写 command。命令里禁止出现管道、重定向、通配符、&& 等 shell 元字符——要跑多个进程就拆成多条判据。',
+            '判据数组（与 acceptance 二选一，给了就优先用它）。每项形如 {"id":"L0-typecheck","level":"L0","criterion":"类型检查通过","command":"npx tsc --noEmit","cwd":".","bucket":"execution","timeout_ms":120000,"expect":{"exit_code":0}}。也可用 "argv":["npx","tsc","--noEmit"] 代替 command，数组每项原样作为一个参数（参数里有空格、引号或 & 等字面字符时用它）。expect 除 exit_code 外还支持输出断言：stdout_includes / stdout_excludes / stdout_matches（及 stderr_ 同名三项，值为字符串或字符串数组）、stdout_json:[{"path":"summary.failed","op":"==","value":0}]（op 取 == != < <= > >=），断言基于完整输出判定。冻结时会预检：命令找不到、expect 写错或含未知字段都直接拒绝。Windows 下 npx/npm 等 .cmd 脚本可直接写名字。L2/L3 是人工判据，可以不写 command。command 里禁止出现管道、重定向、&& 等 shell 元字符——要跑多个进程就拆成多条判据。',
         },
         acceptance: {
           type: 'json',
@@ -181,14 +181,30 @@ export function registerFreezeTool(ctx) {
 
         if (args.dry_run === true) {
           const executable = oracleList.filter((oracle) => oracle.manual !== true).length
+          // dry_run 也跑一遍与正式冻结相同的校验（含「命令找不到」预检），问题放进 issues，
+          // 不要让人看完 dry_run 觉得没问题、正式冻结时才被拒。
+          const preflight = []
+          for (const raw of oracleList) {
+            const check = validateOracle(raw, root)
+            if (!check.ok) {
+              preflight.push({
+                id: check.id ?? raw?.id ?? null,
+                severity: 'blocking',
+                error: check.error,
+                found: check.found,
+                hint: check.hint,
+              })
+            }
+          }
+          const issues = [...compiled.issues, ...preflight]
           return {
-            ok: compiled.blocking_count === 0,
+            ok: compiled.blocking_count === 0 && preflight.length === 0,
             summary: `dry-run：编译出 ${oracleList.length} 条判据（可执行 ${executable} / 人工 ${oracleList.length - executable}），未落盘`,
             run_dir: runDir,
             hash: '',
             budget,
             oracles: oracleList,
-            issues: compiled.issues,
+            issues,
             source,
             dry_run: true,
             next_step:

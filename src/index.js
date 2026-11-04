@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 /**
  * dsh-oracle-gate — 期 1 通路已验证，期 2 起逐步接入真实协议。
  *
@@ -51,7 +52,8 @@ export const name = 'oracle-gate'
  */
 export const inject = ['tools']
 
-const VERSION = '0.0.1'
+// 版本号只认 package.json 一处，避免 ping 报的与发布的不一致。
+const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx

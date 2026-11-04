@@ -186,7 +186,9 @@ export function registerExecTool(ctx) {
               ? `判据「${oracleId}」超时（${oracle.timeout_ms}ms 上限）`
               : verdict === 'spawn-failed'
                 ? `判据「${oracleId}」无法启动：${receipt.spawn_error}`
-                : `判据「${oracleId}」失败（退出码 ${receipt.exit_code}，期望 ${receipt.expected_exit_code}）`
+                : verdict === 'assertion-failed'
+                  ? `判据「${oracleId}」输出断言未通过（退出码 ${receipt.exit_code} 符合预期）：${(receipt.assertions ?? []).filter((item) => item.ok !== true).map((item) => item.detail ?? item.kind).join('；')}`
+                  : `判据「${oracleId}」失败（退出码 ${receipt.exit_code}，期望 ${receipt.expected_exit_code}）`
 
         return {
           // ok 表示「工具本身执行成功」，判据是否通过由 verdict 单独表达。

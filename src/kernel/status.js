@@ -164,6 +164,7 @@ export function renderRunStatus(status, { limit = 20 } = {}) {
         // 「失败」有三种成因，渲染成同一行的话，人就得多跑一次 oracle_gate_gate 才能分辨。
         if (item.reason === 'timed-out') detail = '（超时）'
         else if (item.reason === 'spawn-failed') detail = '（起不来）'
+        else if (item.reason === 'assertion-failed') detail = '（输出断言不符）'
         else if (typeof item.exit_code === 'number') detail = `（退出码 ${item.exit_code}）`
         else if (item.reason !== null) detail = `（${item.reason}）`
       }

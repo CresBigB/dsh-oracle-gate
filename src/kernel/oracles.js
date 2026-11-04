@@ -7,6 +7,8 @@ import { readFileSync, statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { BUCKETS } from './ledger.js'
+import { resolveExecutable } from './command.js'
+import { validateExpect } from './expect.js'
 
 export const ORACLE_FILE = 'oracles.json'
 export const LEVELS = ['L0', 'L1', 'L2', 'L3']
@@ -69,6 +71,14 @@ export function splitCommand(command) {
   return argv
 }
 
+// argv 数组里单独出现这些元素，说明写的人以为有 shell——我们只会把它当字面参数传下去。
+const SHELL_OPERATOR = /^(\|\||&&|\||;|&|>|>>|<|2>|2>&1)$/
+
+/** 把 argv 拼成可读的命令文本，仅用于展示与回执，不用于执行。 */
+export function formatArgv(argv) {
+  return argv.map((arg) => (arg === '' || /[\s"]/.test(arg) ? '"' + arg.replace(/"/g, '\\"') + '"' : arg)).join(' ')
+}
+
 function inside(root, candidate) {
   const rel = relative(root, candidate)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
@@ -78,7 +88,7 @@ function inside(root, candidate) {
  * 校验单条判据。返回 { ok, argv } 或 { ok:false, error }。
  * cwd 必须落在 root 内 —— 判据能跑的命令必须是你授权的那个工作区里的。
  */
-export function validateOracle(oracle, root) {
+export function validateOracle(oracle, root, options = {}) {
   if (!oracle || typeof oracle !== 'object') return { ok: false, error: 'oracle-not-object' }
   const id = typeof oracle.id === 'string' ? oracle.id.trim() : ''
   if (id === '') return { ok: false, error: 'missing-id' }
@@ -88,26 +98,48 @@ export function validateOracle(oracle, root) {
   if (typeof oracle.criterion !== 'string' || oracle.criterion.trim() === '') {
     return { ok: false, error: 'missing-criterion', id }
   }
-  if (oracle.command === undefined || oracle.command === null) {
+  const hasArgv = oracle.argv !== undefined && oracle.argv !== null
+  const hasCommand = oracle.command !== undefined && oracle.command !== null
+  if (!hasArgv && !hasCommand) {
     // L2/L3 是人工判断，允许没有命令。
     if (oracle.level === 'L2' || oracle.level === 'L3') {
       return { ok: true, id, argv: null, manual: true }
     }
     return { ok: false, error: 'missing-command', id }
   }
-  const command = String(oracle.command)
-  const meta = command.match(SHELL_META)
-  if (meta !== null) {
-    return {
-      ok: false,
-      error: 'shell-meta-not-allowed',
-      id,
-      found: meta[0],
-      hint: '拆成多条判据，每条一个进程；管道/重定向/通配符一律不支持',
+  let argv
+  if (hasArgv) {
+    // argv 数组：每个元素原样作为一个参数，不分词、不解析引号——带空格、带引号的参数都不会被拆坏。
+    if (!Array.isArray(oracle.argv) || oracle.argv.some((arg) => typeof arg !== 'string')) {
+      return { ok: false, error: 'bad-argv', id, hint: 'argv 必须是字符串数组，例如 ["node","tests/a.mjs"]' }
     }
+    argv = oracle.argv.slice()
+    if (argv.length === 0 || argv[0].trim() === '') return { ok: false, error: 'empty-command', id }
+    const op = argv.find((arg) => SHELL_OPERATOR.test(arg.trim()))
+    if (op !== undefined) {
+      return {
+        ok: false,
+        error: 'shell-meta-not-allowed',
+        id,
+        found: op,
+        hint: 'argv 里单独的 && | ; > 不会被当成 shell 运算符执行；拆成多条判据，每条一个进程',
+      }
+    }
+  } else {
+    const command = String(oracle.command)
+    const meta = command.match(SHELL_META)
+    if (meta !== null) {
+      return {
+        ok: false,
+        error: 'shell-meta-not-allowed',
+        id,
+        found: meta[0],
+        hint: '拆成多条判据，每条一个进程；参数里确实需要 & | 等字面字符时改用 argv 数组',
+      }
+    }
+    argv = splitCommand(command)
+    if (argv.length === 0) return { ok: false, error: 'empty-command', id }
   }
-  const argv = splitCommand(command)
-  if (argv.length === 0) return { ok: false, error: 'empty-command', id }
   const cwdRaw = typeof oracle.cwd === 'string' && oracle.cwd.trim() !== '' ? oracle.cwd.trim() : '.'
   const cwd = isAbsolute(cwdRaw) ? resolve(cwdRaw) : resolve(root, cwdRaw)
   if (!inside(root, cwd)) {
@@ -116,22 +148,29 @@ export function validateOracle(oracle, root) {
   if (oracle.bucket !== undefined && !BUCKETS.includes(oracle.bucket)) {
     return { ok: false, error: 'bad-bucket', id, known: BUCKETS }
   }
-  const expect = oracle.expect
-  if (
-    expect !== undefined &&
-    expect !== null &&
-    (typeof expect !== 'object' || typeof expect.exit_code !== 'number')
-  ) {
-    return { ok: false, error: 'bad-expect', id, hint: 'expect.exit_code 必填，默认 0' }
+  const expectCheck = validateExpect(oracle.expect)
+  if (!expectCheck.ok) return { ok: false, error: expectCheck.error, id, hint: expectCheck.hint }
+  // 冻结前预检：命令找不到就现在报错，别等到 exec 时才发现、白扣一次预算。
+  if (options.preflight !== false) {
+    const found = resolveExecutable(argv[0], { cwd, env: options.env, platform: options.platform })
+    if (!found.ok) {
+      return {
+        ok: false,
+        error: 'command-not-found',
+        id,
+        found: argv[0],
+        hint: `在 PATH 里找不到 ${argv[0]}（cwd=${cwd}）；确认已安装，或写绝对路径`,
+      }
+    }
   }
-  return { ok: true, id, argv, cwd, manual: false }
+  return { ok: true, id, argv, cwd, manual: false, expect: expectCheck.expect }
 }
 
 /**
  * 冻结判据。成功后再调用会返回 already-frozen，不会覆盖 —— 覆盖就等于允许改判据，
  * 冻结也就失去意义了。要换判据请开新的 run。
  */
-export async function freezeOracles(runDir, { root, run_id, budget, oracles }) {
+export async function freezeOracles(runDir, { root, run_id, budget, oracles, preflight, env, platform }) {
   if (!Array.isArray(oracles) || oracles.length === 0) {
     return { ok: false, error: 'no-oracles' }
   }
@@ -149,23 +188,22 @@ export async function freezeOracles(runDir, { root, run_id, budget, oracles }) {
   const seen = new Set()
   const normalized = []
   for (const raw of oracles) {
-    const check = validateOracle(raw, root)
+    const check = validateOracle(raw, root, { preflight, env, platform })
     if (!check.ok) return { ok: false, error: 'invalid-oracle', detail: check }
     if (seen.has(check.id)) {
       return { ok: false, error: 'duplicate-id', id: check.id }
     }
     seen.add(check.id)
-    const expect = raw.expect && typeof raw.expect.exit_code === 'number' ? raw.expect : { exit_code: 0 }
     normalized.push({
       id: check.id,
       level: raw.level,
       criterion: String(raw.criterion).trim(),
-      command: raw.command === undefined || raw.command === null ? null : String(raw.command),
+      command: check.manual ? null : raw.command === undefined || raw.command === null ? formatArgv(check.argv) : String(raw.command),
       argv: check.argv,
       cwd: check.manual ? null : relative(root, check.cwd) || '.',
       bucket: BUCKETS.includes(raw.bucket) ? raw.bucket : levelBucket(raw.level),
       timeout_ms: clampTimeout(raw.timeout_ms),
-      expect: { exit_code: expect.exit_code },
+      expect: check.manual ? { exit_code: 0 } : check.expect,
       manual: check.manual,
       // 判据冻结的不能只是命令文本。命令里点到的每个本地文件，冻结时记下内容哈希，
       // 执行前重算 —— 否则改一句断言就能改判定，而 oracles.json 的哈希对此无感。
